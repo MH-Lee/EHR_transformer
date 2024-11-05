@@ -1,0 +1,15 @@
+*.csv.gz
+*.csv
+data/
+new_data/
+__pycache__/
+log/
+models/log/
+models/results/
+results/
+nohup_log/
+src/results/
+.hypothesis/
+pretrained_test.ipynb
+pretrained_main.ipynb
+wandb/
