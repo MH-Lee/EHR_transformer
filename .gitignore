@@ -13,3 +13,4 @@ src/results/
 pretrained_test.ipynb
 pretrained_main.ipynb
 wandb/
+exp_setting/

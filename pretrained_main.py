@@ -1,4 +1,5 @@
 import sys
+import json
 import os
 import pickle
 import random
@@ -155,8 +156,8 @@ class Runner:
         val_mlm_loss_list = list()
         val_cls_loss_list = list()
         counter = 0
-        best_score = 0.0
-        best_epoch = 0
+        self.best_val = 0.0
+        self.best_epoch = 0
         model_save_path = ''
         
         for epoch in range(self.args.max_epoch):
@@ -186,11 +187,11 @@ class Runner:
             val_cls_loss_list.append(valid_log['cls_loss'])
             
             current_score = valid_log['auc']
-            if current_score > best_score:
+            if current_score > self.best_val:
                 if osp.isfile(model_save_path):
                     os.remove(model_save_path)
                 self.best_epoch = epoch
-                self.best_val = valid_log
+                self.best_val = valid_log['auc']
                 counter = 0
                 model_filename = self.args.name + f'_best_epoch:{self.best_epoch}.pt'
                 model_save_path = os.path.join(self.args.checkpoint_dir, self.date_str, model_filename)                
@@ -201,8 +202,8 @@ class Runner:
                 self.logger.info(f"Early stopping counter: {counter}/{self.args.patience}")
               
             if counter >= self.args.patience:
-                self.logger.info(f"Early stopping triggered at epoch {best_epoch}")
-                self.logger.info(f"Best Combined Score (AUC): {best_score:.4f}")
+                self.logger.info(f"Early stopping triggered at epoch {self.best_epoch}")
+                self.logger.info(f"Best Combined Score (AUC): {self.best_val:.4f}")
                 break
         
         self.load_data(model_save_path)
@@ -215,7 +216,7 @@ class Runner:
                                   logger=self.logger,
                                   wandb_logger=self.writer,
                                   mode='test')
-        with open(os.path.join(self.args.log_dir, model_filename + f'_best_epoch:{best_epoch}.txt'), 'w') as f:
+        with open(os.path.join(self.args.log_dir, model_filename + f'_best_epoch:{self.best_epoch}.txt'), 'w') as f:
             f.write('\n')
             f.write(str(test_log))
             f.write('\n')
@@ -226,6 +227,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='EHR mimic-iv train model', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--model_name', type=str, default='EHR-Transformer', help='model name')
     parser.add_argument('--data_dir', type=str, default='./new_data/', help='data directory')
+    parser.add_argument('--expset_dir', type=str, default='./src/pretrained_models/exp_setting', help='experiment setting directory')
     parser.add_argument('--log_dir', type=str, default='./src/pretrained_models/log/', help='log directory')
     parser.add_argument('--config_dir', type=str, default='./src/config/', help='config directory')
     parser.add_argument('--checkpoint_dir', type=str, default='./src/pretrained_models/results/', help='model directory')
@@ -233,7 +235,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=256, help='batch size')
     parser.add_argument('--lr', type=float, default=0.0005, help='learning rate')
     parser.add_argument('--device', type=str, default='cuda:0', help='device')
-    parser.add_argument('--mask_prob', type=float, default=0.3, help='mask probability')
+    parser.add_argument('--mask_prob', type=float, default=0.2, help='mask probability')
     parser.add_argument('--max_len', type=int, default=400, help='max length')
     parser.add_argument('--embed_dim', type=int, default=768, help='model dimension')
     parser.add_argument('--ffn_dim', type=int, default=2048, help='feedforward net dimension')
@@ -241,8 +243,8 @@ if __name__ == '__main__':
     parser.add_argument('--num_layers', type=int, default=2, help='number of layers')
     parser.add_argument('--num_classes', type=int, default=100, help='number of classes')
     parser.add_argument('--loss_type', type=str, default='bce', help='loss type')
-    parser.add_argument('--attn_dropout', type=float, default=0.1, help='attention dropout ratio')
-    parser.add_argument('--dropout_rate', type=float, default=0.1, help='dropout ratio')
+    parser.add_argument('--attn_dropout', type=float, default=0.3, help='attention dropout ratio')
+    parser.add_argument('--dropout_rate', type=float, default=0.2, help='dropout ratio')
     parser.add_argument('--alpha', type=float, default=None, help='alpha for balanced bce or focal loss')
     parser.add_argument('--gamma', type=float, default=0.5, help='gamma for focal loss')
     parser.add_argument('--patience', type=int, default=5, help='patience for early stopping')
@@ -277,20 +279,24 @@ if __name__ == '__main__':
         
         if args.use_pretrained:
             if args.diag_freeze:
-                args.name = f'{args.model_name}_dim{args.embed_dim}_nl{args.num_layers}_{args.pretrained_type}_freeze_loss_{args.loss_type}_{date_dir}' + time.strftime('%H:%M:%S') + '_SEED_'
+                # args.name = f'{args.model_name}_dim{args.embed_dim}_nl{args.num_layers}_{args.pretrained_type}_freeze_loss_{args.loss_type}_{date_dir}' + time.strftime('%H:%M:%S') + '_SEED_'
+                args.name = f'{args.model_name}_{seed}_diag_freeze_GPT4O_EXP{str(args.exp_num)}_{date_dir}' 
                 wandb_name = f'{args.model_name}_{seed}_diag_freeze_GPT4O_EXP{str(args.exp_num)}'
                 tags3 = 'diag_freeze'
             else:
-                args.name = f'{args.model_name}_dim{args.embed_dim}_nl{args.num_layers}_{args.pretrained_type}_loss_{args.loss_type}_{date_dir}_' + time.strftime('%H:%M:%S') + '_SEED_'
+                # args.name = f'{args.model_name}_dim{args.embed_dim}_nl{args.num_layers}_{args.pretrained_type}_loss_{args.loss_type}_{date_dir}_' + time.strftime('%H:%M:%S') + '_SEED_'
+                args.name = f'{args.model_name}_{seed}_GPT4O_EXP{str(args.exp_num)}_{date_dir}'
                 wandb_name = f'{args.model_name}_{seed}_GPT4O_EXP{str(args.exp_num)}'
                 tags3 = 'diag_freeze_not'
         else:
             if args.diag_freeze:
-                args.name = f'{args.model_name}_dim{args.embed_dim}_nl{args.num_layers}_freeze_loss_{args.loss_type}_{date_dir}_' + time.strftime('%H:%M:%S') + '_SEED_'
+                # args.name = f'{args.model_name}_dim{args.embed_dim}_nl{args.num_layers}_freeze_loss_{args.loss_type}_{date_dir}_' + time.strftime('%H:%M:%S') + '_SEED_'
+                args.name = f'{args.model_name}_{seed}_diag_freeze_EXP{str(args.exp_num)}_{date_dir}'
                 wandb_name = f'{args.model_name}_{seed}_diag_freeze_EXP{str(args.exp_num)}'
                 tags3 = 'diag_freeze'
             else:
-                args.name = f'{args.model_name}_dim{args.embed_dim}_nl{args.num_layers}_loss_{args.loss_type}_{date_dir}_' + time.strftime('%H:%M:%S') + '_SEED_'
+                # args.name = f'{args.model_name}_dim{args.embed_dim}_nl{args.num_layers}_loss_{args.loss_type}_{date_dir}_' + time.strftime('%H:%M:%S') + '_SEED_'
+                args.name = f'{args.model_name}_{seed}_EXP{str(args.exp_num)}_{date_dir}'
                 wandb_name = f'{args.model_name}_{seed}_EXP{str(args.exp_num)}'
                 tags3 = 'diag_freeze_not'
             
@@ -324,6 +330,12 @@ if __name__ == '__main__':
         args.seed = seed
         args.name = args.name + str(seed)
         args.log_name = args.name + '.log'
+        exp_setting = vars(args)
+        os.makedirs(args.expset_dir, exist_ok=True)
+        with open(osp.join(args.expset_dir, args.name + '.json'), 'w') as f:
+            json.dump(exp_setting, f)
+        f.close()
+        
         os.makedirs(args.log_dir, exist_ok=True)
         os.makedirs(osp.join(args.checkpoint_dir, date_dir), exist_ok=True)
         
