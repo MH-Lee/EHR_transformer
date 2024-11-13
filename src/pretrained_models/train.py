@@ -2,7 +2,7 @@ import torch
 from src.metrics import compute_average_accuracy, compute_average_auc, compute_average_f1_score
 from tqdm import tqdm
 
-def train_model(model, loader, optimizer, mlm_criterion, cls_criterion, epoch, device, logger, wandb_logger, diag_freeze=False):
+def train_model(model, loader, optimizer, mlm_criterion, cls_criterion, epoch, device, logger, wandb_logger, diag_freeze=False, mlm_lambda=0.5):
     # 모델을 학습하기 위한 함수
     model.train()
     train_loss = 0.0
@@ -27,7 +27,8 @@ def train_model(model, loader, optimizer, mlm_criterion, cls_criterion, epoch, d
         total_pred = torch.cat((total_pred, y_pred), dim=0)
         total_true = torch.cat((total_true, labels), dim=0)
         
-        loss = mlm_loss_mean + cls_loss
+        # loss = mlm_loss_mean + cls_loss
+        loss = (mlm_lambda * mlm_loss_mean) + ((1-mlm_lambda) * cls_loss)
 
         loss.backward()
         if diag_freeze:
@@ -35,9 +36,8 @@ def train_model(model, loader, optimizer, mlm_criterion, cls_criterion, epoch, d
             model.code_emb.weight.grad[0:870] = 0
         optimizer.step()
         
-        
-        train_mlm_loss += mlm_loss_mean.item()
-        train_cls_loss += cls_loss.item()
+        train_mlm_loss += (mlm_loss_mean.item() * mlm_lambda)
+        train_cls_loss += (cls_loss.item() * (1 - mlm_lambda))
         train_loss += loss.item()
 
     tr_avg_loss = train_loss / len(loader)
@@ -68,7 +68,7 @@ def train_model(model, loader, optimizer, mlm_criterion, cls_criterion, epoch, d
 
 
 @torch.no_grad()
-def evaluate_model(model, loader, mlm_criterion, cls_criterion, epoch, device, logger, wandb_logger=None, mode='valid'):
+def evaluate_model(model, loader, mlm_criterion, cls_criterion, epoch, device, logger, wandb_logger=None, mode='valid', mlm_lambda=0.5):
     model.eval()
     val_loss = 0.0 
     val_mlm_loss = 0.0
@@ -83,16 +83,17 @@ def evaluate_model(model, loader, mlm_criterion, cls_criterion, epoch, device, l
         mlm_tokens = batch_data['mask_tokens'].to(device)
         mlm_masks = (mlm_tokens != 0).long()
         mlm_loss = mlm_criterion(mlm_output.transpose(1,2), mlm_tokens)
-        mlm_loss = (mlm_loss * mlm_masks).sum() / mlm_masks.sum()
+        mlm_loss_mean = (mlm_loss * mlm_masks).sum() / mlm_masks.sum()
         cls_loss = cls_criterion(logits_cls, labels)
         
         y_pred = torch.sigmoid(logits_cls)
         total_pred = torch.cat((total_pred, y_pred), dim=0)
         total_true = torch.cat((total_true, labels), dim=0)
-        loss = mlm_loss + cls_loss
+
+        loss = (mlm_lambda * mlm_loss_mean) + ((1-mlm_lambda) * cls_loss)
         val_loss += loss.item()
-        val_mlm_loss += mlm_loss.item()
-        val_cls_loss += cls_loss.item()
+        val_mlm_loss += (mlm_loss_mean.item() * mlm_lambda)
+        val_cls_loss += (cls_loss.item() * (1 - mlm_lambda))
     
     val_avg_loss = val_loss / len(loader)
     val_avg_mlm_loss = val_mlm_loss / len(loader)
