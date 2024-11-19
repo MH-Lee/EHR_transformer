@@ -39,7 +39,7 @@ class BERT(nn.Module):
         
         self.act1 = nn.ReLU()
         encoder_layer = nn.TransformerEncoderLayer(d_model=embed_dim, nhead=num_heads, dropout=attn_dropout,
-                                                   dim_feedforward=hidden_dim, batch_first=True)
+                                                   dim_feedforward=hidden_dim, batch_first=True, activation='gelu')
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.classify_layer = nn.Linear(embed_dim, num_classes)
         self.act2 = nn.GELU()

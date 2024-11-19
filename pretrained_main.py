@@ -45,6 +45,8 @@ class Runner:
         else:
             self.device = torch.device('cpu')
         
+        self.labels_list = pickle.load(open(osp.join(args.data_dir, 'top_100_list.pkl'), 'rb'))
+        
         self.seed = args.seed
         self.logger.info(f'device: {self.device}')
         self.date_str = datetime.now().strftime("%Y%m%d")
@@ -111,9 +113,11 @@ class Runner:
         state             = torch.load(load_path)
         state_dict		  = state['state_dict']
         self.best_val     = state['best_val']
-        self.best_val_auc = self.best_val['auc'] 
+        self.best_epoch   = state['best_epoch']
+        self.args         = state['args']
         self.model.load_state_dict(state_dict)
         self.optimizer.load_state_dict(state['optimizer'])
+        self.logger.info(f'Model loaded from {load_path}')
 
     def load_data(self, pretraine_type='te3-small', load_pretrained=False):
         if osp.isfile(osp.join(self.args.data_dir, 'split_dataset_pt', f'train_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}.pt')):
@@ -194,7 +198,7 @@ class Runner:
                 self.best_val = valid_log['auc']
                 counter = 0
                 model_filename = self.args.name + f'_best_epoch:{self.best_epoch}.pt'
-                model_save_path = os.path.join(self.args.checkpoint_dir, self.date_str, model_filename)                
+                model_save_path = os.path.join(self.args.checkpoint_dir, model_filename)                
                 self.save_model(model_save_path)
                 # torch.save(self.model.state_dict(), f'{model_save_path}')
             else:
@@ -206,7 +210,7 @@ class Runner:
                 self.logger.info(f"Best Combined Score (AUC): {self.best_val:.4f}")
                 break
         
-        self.load_data(model_save_path)
+        self.load_model(model_save_path)
         test_log = evaluate_model(model=self.model, 
                                   loader=self.valid_loader,
                                   mlm_criterion=self.mlm_criterion, 
@@ -215,6 +219,7 @@ class Runner:
                                   device=self.device, 
                                   logger=self.logger,
                                   wandb_logger=self.writer,
+                                  test_class_name=self.labels_list,
                                   mode='test')
         self.logger.info(f"Best Combined metrics: \n {str(test_log)}")
         return test_log['acc'], test_log['precision'], test_log['recall'], test_log['f1'], test_log['auc']
@@ -251,14 +256,12 @@ if __name__ == '__main__':
     parser.add_argument('--diag_freeze', action="store_true", help='pretrained embedding freeze')
     parser.add_argument('--use_wandb', action="store_true", help='use wandb (defalut: False)')
     parser.add_argument('--exp_num', type=int, default=0, required=True, help='experiment number')
+    parser.add_argument('--mlm_lambda', type=float, default=0.5, help='lambda for mlm loss')
     args = parser.parse_args()
     
     seed_list = [123, 321, 666, 777, 5959]
     results = []
     date_dir = datetime.today().strftime("%Y%m%d")
-    
-
-    args.log_dir = osp.join(args.log_dir, date_dir)
     
     if args.use_wandb:
         wandb_mode = 'online'
@@ -276,26 +279,30 @@ if __name__ == '__main__':
         
         if args.use_pretrained:
             if args.diag_freeze:
-                # args.name = f'{args.model_name}_dim{args.embed_dim}_nl{args.num_layers}_{args.pretrained_type}_freeze_loss_{args.loss_type}_{date_dir}' + time.strftime('%H:%M:%S') + '_SEED_'
-                args.name = f'{args.model_name}_{seed}_diag_freeze_GPT4O_EXP{str(args.exp_num)}_{date_dir}' 
-                wandb_name = f'{args.model_name}_{seed}_diag_freeze_GPT4O_EXP{str(args.exp_num)}'
-                tags3 = 'diag_freeze'
+                args.name = f'{args.model_name}-GPT4O-EXP{str(seed)}-{str(args.exp_num)}_{date_dir}' 
+                wandb_name = f'{args.model_name}-GPT4O-EXP{str(seed)}-{str(args.exp_num)}'
+                tags2 = 'diag_freeze'
+                tags3 = args.pretrained_type
+                tags4 = args.loss_type
             else:
-                # args.name = f'{args.model_name}_dim{args.embed_dim}_nl{args.num_layers}_{args.pretrained_type}_loss_{args.loss_type}_{date_dir}_' + time.strftime('%H:%M:%S') + '_SEED_'
-                args.name = f'{args.model_name}_{seed}_GPT4O_EXP{str(args.exp_num)}_{date_dir}'
-                wandb_name = f'{args.model_name}_{seed}_GPT4O_EXP{str(args.exp_num)}'
-                tags3 = 'diag_freeze_not'
+                args.name = f'{args.model_name}-GPT4O_EXP{str(seed)}-{str(args.exp_num)}_{date_dir}'
+                wandb_name = f'{args.model_name}-GPT4O_EXP{str(seed)}-{str(args.exp_num)}'
+                tags2 = 'diag_freeze_not'
+                tags3 = args.pretrained_type
+                tags4 = args.loss_type
         else:
             if args.diag_freeze:
-                # args.name = f'{args.model_name}_dim{args.embed_dim}_nl{args.num_layers}_freeze_loss_{args.loss_type}_{date_dir}_' + time.strftime('%H:%M:%S') + '_SEED_'
-                args.name = f'{args.model_name}_{seed}_diag_freeze_EXP{str(args.exp_num)}_{date_dir}'
-                wandb_name = f'{args.model_name}_{seed}_diag_freeze_EXP{str(args.exp_num)}'
-                tags3 = 'diag_freeze'
+                args.name = f'{args.model_name}-EXP{str(seed)}-{str(args.exp_num)}-{date_dir}'
+                wandb_name = f'{args.model_name}-EXP{str(seed)}-{str(args.exp_num)}'
+                tags2 = 'diag_freeze'
+                tags3 = 'no_pretrained'
+                tags4 = args.loss_type
             else:
-                # args.name = f'{args.model_name}_dim{args.embed_dim}_nl{args.num_layers}_loss_{args.loss_type}_{date_dir}_' + time.strftime('%H:%M:%S') + '_SEED_'
-                args.name = f'{args.model_name}_{seed}_EXP{str(args.exp_num)}_{date_dir}'
-                wandb_name = f'{args.model_name}_{seed}_EXP{str(args.exp_num)}'
-                tags3 = 'diag_freeze_not'
+                args.name = f'{args.model_name}-EXP{str(seed)}-{str(args.exp_num)}-{date_dir}'
+                wandb_name = f'{args.model_name}-EXP{str(seed)}-{str(args.exp_num)}'
+                tags2 = 'diag_freeze_not'
+                tags3 = 'no_pretrained'
+                tags4 = args.loss_type
             
         wandb_config = {
             'model_name'        : args.model_name,
@@ -318,10 +325,11 @@ if __name__ == '__main__':
             'patience'          : args.patience,
             'use_pretrained'    : args.use_pretrained,
             'pretrained_type'   : args.pretrained_type,
-            'diag_freeze'       : args.diag_freeze
+            'diag_freeze'       : args.diag_freeze,
+            'mlm_lambda'        : args.mlm_lambda
         }
         
-        writer = wandb.init(project='EHR-Project-New', name=wandb_name, config=wandb_config, tags=[str(seed), args.pretrained_type, tags3],
+        writer = wandb.init(project='EHR-Project-New', name=wandb_name, config=wandb_config, tags=[str(seed), tags2, tags3, tags4],
                             reinit=True, settings=wandb.Settings(start_method='thread'), mode=wandb_mode)
         
         args.seed = seed
@@ -334,9 +342,10 @@ if __name__ == '__main__':
         f.close()
         
         os.makedirs(args.log_dir, exist_ok=True)
-        os.makedirs(osp.join(args.checkpoint_dir, date_dir), exist_ok=True)
+        os.makedirs(args.checkpoint_dir, exist_ok=True)
         
         model = Runner(args, writer)
+        wandb.watch(model.model, log='all')
         acc, prec, rec, f1, auc = model.fit()
         results.append([acc, prec, rec, f1, auc])
         writer.finish()
