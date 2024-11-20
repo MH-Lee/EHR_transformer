@@ -4,15 +4,15 @@ MASK_PROB=0.3
 DIM_FEEDFORWARD=2048
 LOSS_TYPE=balanced_bce
 PRETRAINED_TYPE=te3-small
-EMB_DIM=256
+EMB_DIM=512
 EPOCHS=100
-NUM_HEADS=4
-NUM_LAYERS=2
-ATTN_DROPOUT=0.2
+NUM_HEADS=8
+NUM_LAYERS=4
+ATTN_DROPOUT=0.3
 DROPOUT=0.2
-MLM_LAMBDA=0.1
+MLM_LAMBDA=0.15
 GAMMA=2.0
-EXP_NUM=2
+EXP_NUM=3
 DEVICE=cuda:1
 
 
@@ -35,6 +35,8 @@ python -u pretrained_main.py \
         --mlm_lambda $MLM_LAMBDA \
         --use_pretrained \
         --use_wandb
+
+EXP_NUM=4
 
 python -u pretrained_main.py \
         --batch_size $BATCH_SIZE \

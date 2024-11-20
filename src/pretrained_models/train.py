@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 
 
 def train_model(model, loader, optimizer, mlm_criterion, cls_criterion, epoch, device, logger, wandb_logger=None, \
-                thresholds=None, diag_freeze=False, mlm_lambda=0.5):
+                use_thresholds=True, diag_freeze=False, mlm_lambda=0.5):
     # 모델을 학습하기 위한 함수
     model.train()
     train_loss = 0.0
@@ -49,14 +49,18 @@ def train_model(model, loader, optimizer, mlm_criterion, cls_criterion, epoch, d
     tr_avg_loss = train_loss / len(loader)
     tr_avg_mlm_loss = train_mlm_loss / len(loader)
     tr_avg_cls_loss = train_cls_loss / len(loader)
-    
+
+    auc_dict = compute_average_auc(total_pred.cpu().detach(), 
+                                   total_true.cpu().detach(),
+                                   use_threshold=use_thresholds,
+                                   reduction='mean')
+    auc = auc_dict['auc']
+    thresholds = auc_dict['thresholds']
     acc = compute_average_accuracy(total_pred.cpu().detach(), 
                                    total_true.cpu().detach(),
                                    reduction='mean',
                                    thresholds=thresholds)['accuracies']
-    auc = compute_average_auc(total_pred.cpu().detach(), 
-                              total_true.cpu().detach(), 
-                              reduction='mean')
+
     f1_recall_prec = compute_average_f1_score(total_pred.cpu().detach(), 
                                               total_true.cpu().detach(), 
                                               reduction='macro', 
@@ -79,7 +83,7 @@ def train_model(model, loader, optimizer, mlm_criterion, cls_criterion, epoch, d
 
 @torch.no_grad()
 def evaluate_model(model, loader, mlm_criterion, cls_criterion, epoch, device, logger, wandb_logger=None,\
-                   test_class_name=None, thresholds=None, mode='valid', mlm_lambda=0.5):
+                   test_class_name=None, use_thresholds=True, mode='valid', mlm_lambda=0.5):
     model.eval()
     val_loss = 0.0 
     val_mlm_loss = 0.0
@@ -111,13 +115,35 @@ def evaluate_model(model, loader, mlm_criterion, cls_criterion, epoch, device, l
     val_avg_cls_loss = val_cls_loss / len(loader)
     y_true, y_pred_prob = total_true.cpu().detach(), total_pred.cpu().detach()
     
-    acc = compute_average_accuracy(y_pred_prob, y_true, reduction='mean', thresholds=thresholds)['accuracies']
-    auc = compute_average_auc(y_pred_prob, y_true, reduction='mean')
-    f1_recall_prec = compute_average_f1_score(y_pred_prob, y_true, reduction='macro', thresholds=thresholds)
+    if mode == 'valid':
+        auc_dict = compute_average_auc(y_pred_prob, y_true, reduction='mean', use_thresholds=use_thresholds)
+        auc = auc_dict['auc']
+        thresholds = auc_dict['thresholds']
+        acc = compute_average_accuracy(y_pred_prob, y_true, reduction='mean', thresholds=thresholds)['accuracies']
+    elif mode == 'test':
+        auc_raw_dict = compute_average_auc(y_pred_prob, y_true, reduction='none')
+        auc_raw = auc_raw_dict['aucs']
+        thresholds = auc_raw_dict['thresholds']
+        acc_raw = compute_average_accuracy(y_pred_prob, y_true, reduction='none', thresholds=thresholds)['accuracies']
+        acc_data = [[label, val] for (label, val) in zip(test_class_name, list(acc_raw))]
+        auc_data = [[label, val] for (label, val) in zip(test_class_name, list(auc_raw))]
+        
+        acc_table = wandb.Table(data=acc_data, columns = ["Diagnosis_name", "Accuracy"])
+        auc_table = wandb.Table(data=auc_data, columns = ["Diagnosis_name", "AUC"])
+
+        acc = round(float(np.mean(acc_raw)), ndigits=4)
+        auc = round(float(np.mean(auc_raw)), ndigits=4)
+        
+        wandb.log({"ACC_Chart" : wandb.plot.bar(acc_table, "Diagnosis_name", "Accuracy", title="Accuracy per class")})
+        wandb.log({"AUC_Chart" : wandb.plot.bar(auc_table, "Diagnosis_name", "AUC", title="AUC per class")})
+    else:
+        raise ValueError('mode should be either valid or test')
     
+    f1_recall_prec = compute_average_f1_score(y_pred_prob, y_true, reduction='macro', thresholds=thresholds)
     f1 = f1_recall_prec['average_f1_score']
     precision = f1_recall_prec['average_precision']
     recall = f1_recall_prec['average_recall']
+    
     logger.info(f'[Epoch {mode} {epoch}]: Total loss: {val_avg_loss:.4f} | MLM loss: {val_avg_mlm_loss:.4f} | CLS loss: {val_avg_cls_loss:.4f}')
     logger.info(f'[Epoch {mode} {epoch}]: Acuuracy: {acc:.4f}, AUC: {auc:.4f}, F1: {f1:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}')
     if mode == 'valid':
@@ -134,26 +160,17 @@ def evaluate_model(model, loader, mlm_criterion, cls_criterion, epoch, device, l
                 roc_fig, _ = plot_roc_curve(y_true[:, i].numpy(), y_pred_prob[:, i].numpy(), test_class_name[i])
                 cm_plot_dict[f'ConfusionMatrix/Confusion matrix {test_class_name[i]}'] = cm_fig
                 roc_plot_dict[f'ROC_plot/ROC {test_class_name[i]}'] = roc_fig
-                # cm_plot_dict[f'Confusion matrix {test_class_name[i]}'] = wandb.Image(cm_fig)
-                # roc_plot_dict[f'ROC {test_class_name[i]}'] = wandb.Image(roc_fig)
                 plt.close(cm_fig)
                 plt.close(roc_fig)
-                # y_probas = np.column_stack((1 - y_pred_prob[:, i].numpy(), y_pred_prob[:, i].numpy()))
-                # wandb_logger.log({f'Confusion matrix {test_class_name[i]}' : wandb.sklearn.plot_confusion_matrix(y_true[:, i].numpy(), y_pred, labels=[0, 1])})
-                # wandb_logger.log({f'ROC {test_class_name[i]}': wandb.sklearn.plot_roc(y_true[:, i].numpy(), y_probas, labels=[0,1])})
             else:
                 y_pred = total_pred[:, i].ge(thresholds[i]).float().numpy()
                 cm_fig, ax = plot_confusion_matrix(y_true[:, i].numpy(), y_pred, test_class_name[i])
                 roc_fig, ax = plot_roc_curve(y_true[:, i].numpy(), y_pred_prob[:, i].numpy(), test_class_name[i])
                 cm_plot_dict[f'ConfusionMatrix/Confusion matrix {test_class_name[i]}'] = cm_fig
                 roc_plot_dict[f'ROC_plot/ROC {test_class_name[i]}'] = roc_fig
-                # cm_plot_dict[f'Confusion matrix {test_class_name[i]}'] = wandb.Image(cm_fig)
-                # roc_plot_dict[f'ROC {test_class_name[i]}'] = wandb.Image(roc_fig)
                 plt.close(cm_fig)
                 plt.close(roc_fig)
-                # y_probas = np.column_stack((1 - y_pred_prob[:, i].numpy(), y_pred_prob[:, i].numpy()))
-                # wandb_logger.log({f'Confusion matrix {test_class_name[i]}' : wandb.sklearn.plot_confusion_matrix(y_true[:, i].numpy(), y_pred, labels=[0, 1])})
-                # wandb_logger.log({f'ROC {test_class_name[i]}': wandb.sklearn.plot_roc(y_true[:, i].numpy(), y_probas, labels=[0, 1])})
+                
         wandb_logger.log(cm_plot_dict)
         wandb_logger.log(roc_plot_dict)
         
@@ -179,9 +196,16 @@ def plot_confusion_matrix(y_true, y_pred, class_names):
 
 def plot_roc_curve(y_true, y_score, class_names):
     roc_fig, ax = plt.subplots(figsize=(8, 6))
-    fpr, tpr, _ = roc_curve(y_true, y_score)
+    fpr, tpr, thresholds = roc_curve(y_true, y_score)
     roc_auc = auc(fpr, tpr)
-    plt.plot(fpr, tpr, color='darkorange', lw=2, label='ROC curve (area = %0.2f)' % roc_auc)
+    # get the best threshold
+    J = tpr - fpr
+    ix = np.argmax(J)
+    best_thresh = thresholds[ix]
+    sens, spec = tpr[ix], 1-fpr[ix]
+    plt.plot(fpr, tpr, color='darkorange', lw=2, label='ROC curve (area = %0.3f)' % roc_auc)
+    plt.scatter(fpr[ix], tpr[ix], marker='+', s=20, color='r', 
+                label='Best threshold = %.3f, \nSensitivity (TPR) = %.3f, \nSpecificity (1-FPR) = %.3f' % (best_thresh, sens, spec))
     plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
     plt.xlim([0.0, 1.0])
     plt.ylim([0.0, 1.05])
