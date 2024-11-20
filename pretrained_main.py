@@ -114,7 +114,6 @@ class Runner:
         state_dict		  = state['state_dict']
         self.best_val     = state['best_val']
         self.best_epoch   = state['best_epoch']
-        self.args         = state['args']
         self.model.load_state_dict(state_dict)
         self.optimizer.load_state_dict(state['optimizer'])
         self.logger.info(f'Model loaded from {load_path}')
@@ -173,6 +172,7 @@ class Runner:
                                     epoch=epoch, device=self.device, 
                                     logger=self.logger, 
                                     wandb_logger=self.writer,
+                                    use_thresholds=self.args.use_thresholds,
                                     diag_freeze=self.args.diag_freeze)
             valid_log = evaluate_model(model=self.model, 
                                        loader=self.valid_loader,
@@ -181,6 +181,7 @@ class Runner:
                                        epoch=epoch, 
                                        device=self.device, 
                                        logger=self.logger,
+                                       use_thresholds=self.args.use_thresholds,
                                        wandb_logger=self.writer,
                                        mode='valid')
             tr_loss_list.append(train_log['loss'])
@@ -219,6 +220,7 @@ class Runner:
                                   device=self.device, 
                                   logger=self.logger,
                                   wandb_logger=self.writer,
+                                  use_thresholds=self.args.use_thresholds,
                                   test_class_name=self.labels_list,
                                   mode='test')
         self.logger.info(f"Best Combined metrics: \n {str(test_log)}")
@@ -255,6 +257,7 @@ if __name__ == '__main__':
     parser.add_argument('--pretrained_type', type=str, default='te3-small', help='pretrained model type')
     parser.add_argument('--diag_freeze', action="store_true", help='pretrained embedding freeze')
     parser.add_argument('--use_wandb', action="store_true", help='use wandb (defalut: False)')
+    parser.add_argument('--use_thresholds', action="store_true", help='use thresholds for evaluation')
     parser.add_argument('--exp_num', type=int, default=0, required=True, help='experiment number')
     parser.add_argument('--mlm_lambda', type=float, default=0.5, help='lambda for mlm loss')
     args = parser.parse_args()

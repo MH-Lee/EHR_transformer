@@ -6,7 +6,7 @@ from typing import Any, List, Optional, Tuple, Union, Dict
 from sklearn.metrics import auc, precision_recall_curve, roc_curve
 from sklearn.metrics import roc_auc_score as roc_auc
 
-def compute_average_auc(y_pred: Tensor, y_true: Tensor, reduction='mean', use_threshold=True):
+def compute_average_auc(y_pred: Tensor, y_true: Tensor, reduction='mean', use_thresholds=True):
     """ This function computes AUC for multi-label binary classification."""
     reduction = reduction.lower()
     assert reduction in {"mean", "none"}
@@ -29,7 +29,7 @@ def compute_average_auc(y_pred: Tensor, y_true: Tensor, reduction='mean', use_th
     if reduction == 'mean':
         roc_aucs = round(float(np.mean(roc_aucs)), ndigits=4)
     
-    if use_threshold:
+    if use_thresholds:
         thresholds = threshold_list
     else:
         thresholds = None

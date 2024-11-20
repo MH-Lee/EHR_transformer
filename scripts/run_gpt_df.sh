@@ -1,6 +1,6 @@
 BATCH_SIZE=256
 LEARNING_RATE=5e-4
-MASK_PROB=0.25
+MASK_PROB=0.3
 DIM_FEEDFORWARD=2048
 LOSS_TYPE=balanced_bce
 PRETRAINED_TYPE=te3-small
@@ -13,9 +13,8 @@ DROPOUT=0.2
 MLM_LAMBDA=0.15
 GAMMA=0.0
 ALPHA=0.25
-EXP_NUM=3
+EXP_NUM=4
 DEVICE=cuda:1
-
 
 python -u pretrained_main.py \
         --batch_size $BATCH_SIZE \
@@ -36,4 +35,5 @@ python -u pretrained_main.py \
         --device $DEVICE \
         --mlm_lambda $MLM_LAMBDA \
         --use_pretrained \
+        --diag_freeze \
         --use_wandb

@@ -1,6 +1,6 @@
 BATCH_SIZE=256
 LEARNING_RATE=5e-4
-MASK_PROB=0.3
+MASK_PROB=0.25
 DIM_FEEDFORWARD=2048
 LOSS_TYPE=balanced_bce
 EMB_DIM=256
@@ -12,7 +12,7 @@ DROPOUT=0.2
 MLM_LAMBDA=0.15
 GAMMA=0.0
 ALPHA=0.25
-EXP_NUM=1
+EXP_NUM=2
 DEVICE=cuda:0
 
 python -u pretrained_main.py \
@@ -32,4 +32,5 @@ python -u pretrained_main.py \
             --exp_num $EXP_NUM \
             --device $DEVICE \
             --mlm_lambda $MLM_LAMBDA \
+            --diag_freeze \
             --use_wandb

@@ -52,7 +52,7 @@ def train_model(model, loader, optimizer, mlm_criterion, cls_criterion, epoch, d
 
     auc_dict = compute_average_auc(total_pred.cpu().detach(), 
                                    total_true.cpu().detach(),
-                                   use_threshold=use_thresholds,
+                                   use_thresholds=use_thresholds,
                                    reduction='mean')
     auc = auc_dict['auc']
     thresholds = auc_dict['thresholds']
@@ -121,7 +121,7 @@ def evaluate_model(model, loader, mlm_criterion, cls_criterion, epoch, device, l
         thresholds = auc_dict['thresholds']
         acc = compute_average_accuracy(y_pred_prob, y_true, reduction='mean', thresholds=thresholds)['accuracies']
     elif mode == 'test':
-        auc_raw_dict = compute_average_auc(y_pred_prob, y_true, reduction='none')
+        auc_raw_dict = compute_average_auc(y_pred_prob, y_true, reduction='none', use_thresholds=use_thresholds)
         auc_raw = auc_raw_dict['aucs']
         thresholds = auc_raw_dict['thresholds']
         acc_raw = compute_average_accuracy(y_pred_prob, y_true, reduction='none', thresholds=thresholds)['accuracies']
