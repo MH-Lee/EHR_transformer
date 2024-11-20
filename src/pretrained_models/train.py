@@ -122,7 +122,7 @@ def evaluate_model(model, loader, mlm_criterion, cls_criterion, epoch, device, l
         acc = compute_average_accuracy(y_pred_prob, y_true, reduction='mean', thresholds=thresholds)['accuracies']
     elif mode == 'test':
         auc_raw_dict = compute_average_auc(y_pred_prob, y_true, reduction='none', use_thresholds=use_thresholds)
-        auc_raw = auc_raw_dict['aucs']
+        auc_raw = auc_raw_dict['auc']
         thresholds = auc_raw_dict['thresholds']
         acc_raw = compute_average_accuracy(y_pred_prob, y_true, reduction='none', thresholds=thresholds)['accuracies']
         acc_data = [[label, val] for (label, val) in zip(test_class_name, list(acc_raw))]

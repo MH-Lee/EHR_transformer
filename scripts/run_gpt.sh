@@ -16,7 +16,6 @@ ALPHA=0.25
 EXP_NUM=3
 DEVICE=cuda:1
 
-
 python -u pretrained_main.py \
         --batch_size $BATCH_SIZE \
         --max_epoch $EPOCHS \
