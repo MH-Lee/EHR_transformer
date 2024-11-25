@@ -7,11 +7,14 @@ EMB_DIM=256
 EPOCHS=100
 NUM_HEADS=8
 NUM_LAYERS=4
+NUM_CLASSES=40
+LABEL_TYPE=top
 ATTN_DROPOUT=0.3
 DROPOUT=0.2
-MLM_LAMBDA=0.15
+MLM_LAMBDA=0.3
 GAMMA=0.0
-ALPHA=0.25
+ALPHA=0.2
+POOL_TYPE=mean
 EXP_NUM=2
 DEVICE=cuda:0
 
@@ -25,6 +28,8 @@ python -u pretrained_main.py \
             --loss_type $LOSS_TYPE \
             --num_heads $NUM_HEADS \
             --num_layers $NUM_LAYERS \
+            --num_classes $NUM_CLASSES \
+            --label_type $LABEL_TYPE \
             --attn_dropout $ATTN_DROPOUT \
             --dropout $DROPOUT \
             --gamma $GAMMA \
@@ -32,5 +37,6 @@ python -u pretrained_main.py \
             --exp_num $EXP_NUM \
             --device $DEVICE \
             --mlm_lambda $MLM_LAMBDA \
+            --pool_type $POOL_TYPE \
             --diag_freeze \
             --use_wandb

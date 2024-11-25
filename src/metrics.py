@@ -6,7 +6,7 @@ from typing import Any, List, Optional, Tuple, Union, Dict
 from sklearn.metrics import auc, precision_recall_curve, roc_curve
 from sklearn.metrics import roc_auc_score as roc_auc
 
-def compute_average_auc(y_pred: Tensor, y_true: Tensor, reduction='mean', use_thresholds=True):
+def compute_average_auc(y_pred: Tensor, y_true: Tensor, reduction='mean'):
     """ This function computes AUC for multi-label binary classification."""
     reduction = reduction.lower()
     assert reduction in {"mean", "none"}
@@ -16,26 +16,14 @@ def compute_average_auc(y_pred: Tensor, y_true: Tensor, reduction='mean', use_th
 
     assert y_true.size() == y_pred.size()
 
-    # roc_aucs = [roc_auc(y_true[:, i], y_pred[:, i])
-    #             for i in range(y_true.size(1))]
-    roc_aucs = []
-    threshold_list = []
-    for i in range(y_true.size(1)):
-        fpr, tpr, th = roc_curve(y_true[:, i], y_pred[:, i])
-        roc_aucs.append(auc(fpr, tpr))
-        # Youden’s J statistic
-        threshold_list.append(th[np.argmax(tpr - fpr)])
+    roc_aucs = [roc_auc(y_true[:, i], y_pred[:, i])
+                for i in range(y_true.size(1))]
 
     if reduction == 'mean':
-        roc_aucs = round(float(np.mean(roc_aucs)), ndigits=4)
-    
-    if use_thresholds:
-        thresholds = threshold_list
+        return round(float(np.mean(roc_aucs)), ndigits=4)
     else:
-        thresholds = None
+        return roc_aucs
         
-    return {'auc': roc_aucs, 'thresholds': thresholds}
-
 
 def compute_average_accuracy(
         y_pred: Tensor, y_true: Tensor, thresholds: Optional[List[float]] = None, reduction: str = 'mean'

@@ -20,10 +20,11 @@ class Embedding(nn.Embedding):
                 
 
 class BERT(nn.Module):
-    def __init__(self, vocab_size, embed_dim, num_heads, hidden_dim, num_layers, max_len=50, 
-                 num_classes=100, attn_dropout=0.1, dropout_rate=0.1, device='cpu', pretrained_emb=None):
+    def __init__(self, vocab_size, embed_dim, num_heads, hidden_dim, num_layers, max_len=50, num_classes=100, 
+                 attn_dropout=0.1, dropout_rate=0.1, device='cpu', pool_type='mean', pretrained_emb=None):
         super(BERT, self).__init__()
         self.device = device
+        self.pool_type = pool_type
         if pretrained_emb is None:
             self.code_emb = Embedding(vocab_size, embed_dim, padding_idx=0)
         else:
@@ -61,8 +62,16 @@ class BERT(nn.Module):
         h_masked = torch.gather(encoder_output, 1, mlm_pos.to(self.device)) # masking position [batch_size, max_pred, d_model]
         h_masked = self.layer_norm(self.act2(self.fc1(h_masked))) # masking position [batch_size, max_pred, d_model]
         mlm_output = h_masked @ self.code_emb.weight.data.t() # masking position [batch_size, max_pred, n_diag]
+        if self.pool_type == 'mean':
+            # import pdb; pdb.set_trace()
+            non_zero = ((batch['code_types'] != 4) & (batch['code_types'] != 0)).float().unsqueeze(2).to(self.device)
+            mean_pool = (encoder_output * non_zero).sum(1) / non_zero.sum(1)
+            h_pooled = self.act1(self.fc2(mean_pool)) # [batch_size, d_model]
+        elif self.pool_type == 'cls':
+            h_pooled = self.act1(self.fc2(encoder_output[:, 0, :])) # [batch_size, d_model]
+        else:
+            raise ValueError("Invalid pool type selected %s" % self.pool_type)
         
-        h_pooled = self.act1(self.fc2(encoder_output[:, 0, :])) # [batch_size, d_model]
         # import pdb; pdb.set_trace()
         logits_cls = self.classify_layer(h_pooled) # [batch_size, 100]
         

@@ -4,10 +4,10 @@ import pickle
 import os.path as osp
 import logging, logging.config
 
-def get_datasets(path, seed):
-    tr_ds = pickle.load(open(osp.join(path, f'train_datasets_{seed}.pkl'), 'rb'))
-    val_ds = pickle.load(open(osp.join(path, f'valid_datasets_{seed}.pkl'), 'rb'))
-    te_ds  = pickle.load(open(osp.join(path, f'test_datasets_{seed}.pkl'),  'rb'))
+def get_datasets(path, seed, num_classes=100):
+    tr_ds = pickle.load(open(osp.join(path, f'train_datasets_{seed}_multi_labels.pkl'), 'rb'))
+    val_ds = pickle.load(open(osp.join(path, f'valid_datasets_{seed}_multi_labels.pkl'), 'rb'))
+    te_ds  = pickle.load(open(osp.join(path, f'test_datasets_{seed}_multi_labels.pkl'),  'rb'))
     return tr_ds, val_ds, te_ds
 
 def get_logger(name, log_dir, config_dir):

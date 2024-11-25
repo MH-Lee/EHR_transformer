@@ -45,7 +45,7 @@ class Runner:
         else:
             self.device = torch.device('cpu')
         
-        self.labels_list = sorted(pickle.load(open(osp.join(args.data_dir, f'top_{self.args.num_classes}_list.pkl'), 'rb')))
+        self.labels_list = pickle.load(open(osp.join(args.data_dir, 'top_100_list.pkl'), 'rb'))
         
         self.seed = args.seed
         self.logger.info(f'device: {self.device}')
@@ -58,14 +58,13 @@ class Runner:
                               hidden_dim=self.args.ffn_dim, num_layers=self.args.num_layers, \
                               max_len=self.args.max_len, attn_dropout=self.args.attn_dropout, \
                               dropout_rate=self.args.dropout_rate, device=self.device, \
-                              pool_type=self.args.pool_type, num_classes=self.args.num_classes).to(self.device)
+                              num_classes=self.args.num_classes).to(self.device)
         else:
             self.model = BERT(vocab_size=len(self.code_idx), embed_dim=self.args.embed_dim, \
                               num_heads=self.args.num_heads, hidden_dim=self.args.ffn_dim, \
                               num_layers=self.args.num_layers, max_len=self.args.max_len, \
                               attn_dropout=self.args.attn_dropout, dropout_rate=self.args.dropout_rate, \
-                              device=self.device, pool_type=self.args.pool_type, \
-                              num_classes=self.args.num_classes).to(self.device)
+                              device=self.device, num_classes=self.args.num_classes).to(self.device)
 
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=args.lr)
         self.mlm_criterion = nn.CrossEntropyLoss(reduction='none', ignore_index=0)
@@ -120,20 +119,20 @@ class Runner:
         self.logger.info(f'Model loaded from {load_path}')
 
     def load_data(self, pretraine_type='te3-small', load_pretrained=False):
-        if osp.isfile(osp.join(self.args.data_dir, 'split_dataset_pt', f'train_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}_nc{self.args.num_classes}_{self.args.label_type}.pt')):
-            train_datasets = torch.load(osp.join(self.args.data_dir, 'split_dataset_pt', f'train_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}_nc{self.args.num_classes}_{self.args.label_type}.pt'))
-            valid_datasets = torch.load(osp.join(self.args.data_dir, 'split_dataset_pt', f'valid_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}_nc{self.args.num_classes}_{self.args.label_type}.pt'))
-            test_datasets = torch.load(osp.join(self.args.data_dir, 'split_dataset_pt', f'test_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}_nc{self.args.num_classes}_{self.args.label_type}.pt'))
+        if osp.isfile(osp.join(self.args.data_dir, 'split_dataset_pt', f'train_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}.pt')):
+            train_datasets = torch.load(osp.join(self.args.data_dir, 'split_dataset_pt', f'train_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}.pt'))
+            valid_datasets = torch.load(osp.join(self.args.data_dir, 'split_dataset_pt', f'valid_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}.pt'))
+            test_datasets = torch.load(osp.join(self.args.data_dir, 'split_dataset_pt', f'test_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}.pt'))
             self.logger.info(f'train_ds: {len(train_datasets)} | valid_ds: {len(valid_datasets)} | test_ds: {len(test_datasets)}')
         else:
             train_ds, valid_ds, test_ds = get_datasets(osp.join(self.args.data_dir, 'split_datasets'), self.seed)
             self.logger.info(f'train_ds: {len(train_ds)} | valid_ds: {len(valid_ds)} | test_ds: {len(test_ds)}')
-            train_datasets = PretrainedEHRDataset(train_ds, mask_prob=self.args.mask_prob, max_len=self.args.max_len, num_classes=self.args.num_classes, label_type=self.args.label_type)
-            valid_datasets = PretrainedEHRDataset(valid_ds, mask_prob=self.args.mask_prob, max_len=self.args.max_len, num_classes=self.args.num_classes, label_type=self.args.label_type)
-            test_datasets = PretrainedEHRDataset(test_ds, mask_prob=self.args.mask_prob, max_len=self.args.max_len, num_classes=self.args.num_classes, label_type=self.args.label_type)
-            torch.save(train_datasets, osp.join(self.args.data_dir, 'split_dataset_pt', f'train_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}_nc{self.args.num_classes}_{self.args.label_type}.pt'))
-            torch.save(valid_datasets, osp.join(self.args.data_dir, 'split_dataset_pt', f'valid_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}_nc{self.args.num_classes}_{self.args.label_type}.pt'))
-            torch.save(test_datasets, osp.join(self.args.data_dir, 'split_dataset_pt', f'test_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}_nc{self.args.num_classes}_{self.args.label_type}.pt'))
+            train_datasets = PretrainedEHRDataset(train_ds, mask_prob=self.args.mask_prob, max_len=self.args.max_len)
+            valid_datasets = PretrainedEHRDataset(valid_ds, mask_prob=self.args.mask_prob, max_len=self.args.max_len)
+            test_datasets = PretrainedEHRDataset(test_ds, mask_prob=self.args.mask_prob, max_len=self.args.max_len)
+            torch.save(train_datasets, osp.join(self.args.data_dir, 'split_dataset_pt', f'train_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}.pt'))
+            torch.save(valid_datasets, osp.join(self.args.data_dir, 'split_dataset_pt', f'valid_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}.pt'))
+            torch.save(test_datasets, osp.join(self.args.data_dir, 'split_dataset_pt', f'test_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}.pt'))
         
         self.train_loader = DataLoader(train_datasets, batch_size=self.args.batch_size, shuffle=True,\
                                        num_workers=self.args.num_workers, collate_fn=collate_fn_pt)
@@ -253,7 +252,6 @@ if __name__ == '__main__':
     parser.add_argument('--num_heads', type=int, default=4, help='number of heads')
     parser.add_argument('--num_layers', type=int, default=2, help='number of layers')
     parser.add_argument('--num_classes', type=int, default=100, help='number of classes')
-    parser.add_argument('--label_type', type=str, default='top', help='class label type [top, bot]')   
     parser.add_argument('--loss_type', type=str, default='bce', help='loss type')
     parser.add_argument('--attn_dropout', type=float, default=0.3, help='attention dropout ratio')
     parser.add_argument('--dropout_rate', type=float, default=0.2, help='dropout ratio')
@@ -268,7 +266,6 @@ if __name__ == '__main__':
     parser.add_argument('--use_thresholds', action="store_true", help='use thresholds for evaluation')
     parser.add_argument('--exp_num', type=int, default=0, required=True, help='experiment number')
     parser.add_argument('--mlm_lambda', type=float, default=0.5, help='lambda for mlm loss')
-    parser.add_argument('--pool_type', type=str, default='mean', help='pooling type [cls, mean]')
     args = parser.parse_args()
     
     seed_list = [123, 321, 666, 777, 5959]
@@ -330,7 +327,6 @@ if __name__ == '__main__':
             'num_heads'         : args.num_heads,
             'num_layers'        : args.num_layers,
             'num_classes'       : args.num_classes,
-            'label_type'        : args.label_type,
             'num_workers'       : args.num_workers,
             'dim_feedforward'   : args.ffn_dim,
             'loss_type'         : args.loss_type,
@@ -340,12 +336,10 @@ if __name__ == '__main__':
             'use_pretrained'    : args.use_pretrained,
             'pretrained_type'   : args.pretrained_type,
             'diag_freeze'       : args.diag_freeze,
-            'mlm_lambda'        : args.mlm_lambda,
-            'pool_type'         : args.pool_type,
+            'mlm_lambda'        : args.mlm_lambda
         }
         
-        writer = wandb.init(project='EHR-Project-New', name=wandb_name, config=wandb_config, 
-                            tags=[str(seed), tags2, tags3, tags4, f'{args.label_type}_{args.num_classes}', args.pool_type],
+        writer = wandb.init(project='EHR-Project-New', name=wandb_name, config=wandb_config, tags=[str(seed), tags2, tags3, tags4],
                             reinit=True, settings=wandb.Settings(start_method='thread'), mode=wandb_mode)
         
         args.seed = seed

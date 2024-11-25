@@ -8,15 +8,15 @@ import matplotlib.pyplot as plt
 
 
 def train_model(model, loader, optimizer, mlm_criterion, cls_criterion, epoch, device, logger, wandb_logger=None, \
-                use_thresholds=True, diag_freeze=False, mlm_lambda=0.5):
+                use_thresholds=True, diag_freeze=False, mlm_lambda=0.5, num_classes=100):
     # 모델을 학습하기 위한 함수
     model.train()
     train_loss = 0.0
     train_mlm_loss = 0.0
     train_cls_loss = 0.0
-    
-    total_pred = torch.empty((0, 100), device=device)
-    total_true = torch.empty((0, 100), device=device)
+    thresholds = None
+    total_pred = torch.empty((0, num_classes), device=device)
+    total_true = torch.empty((0, num_classes), device=device)
     
     for batch_data in tqdm(loader):
         optimizer.zero_grad()
@@ -50,25 +50,26 @@ def train_model(model, loader, optimizer, mlm_criterion, cls_criterion, epoch, d
     tr_avg_mlm_loss = train_mlm_loss / len(loader)
     tr_avg_cls_loss = train_cls_loss / len(loader)
 
-    auc_dict = compute_average_auc(total_pred.cpu().detach(), 
-                                   total_true.cpu().detach(),
-                                   use_thresholds=use_thresholds,
-                                   reduction='mean')
-    auc = auc_dict['auc']
-    thresholds = auc_dict['thresholds']
-    acc = compute_average_accuracy(total_pred.cpu().detach(), 
-                                   total_true.cpu().detach(),
-                                   reduction='mean',
-                                   thresholds=thresholds)['accuracies']
-
     f1_recall_prec = compute_average_f1_score(total_pred.cpu().detach(), 
                                               total_true.cpu().detach(), 
                                               reduction='macro', 
                                               thresholds=thresholds)
-    
     f1 = f1_recall_prec['average_f1_score']
     precision = f1_recall_prec['average_precision']
     recall = f1_recall_prec['average_recall']
+
+    if use_thresholds:
+        thresholds = f1_recall_prec['thresholds']
+    else:
+        thresholds = None
+
+    auc = compute_average_auc(total_pred.cpu().detach(), 
+                              total_true.cpu().detach(),
+                              reduction='mean')
+    acc = compute_average_accuracy(total_pred.cpu().detach(), 
+                                   total_true.cpu().detach(),
+                                   reduction='mean',
+                                   thresholds=thresholds)['accuracies']
     
     logger.info(f'[Epoch train {epoch}]: Total loss: {tr_avg_loss:.4f} | MLM loss: {tr_avg_mlm_loss:.4f} | CLS loss: {tr_avg_cls_loss:.4f}')
     logger.info(f'[Epoch train {epoch}]: Acuuracy: {acc:.4f}, AUC: {auc:.4f}, F1: {f1:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}')
@@ -83,14 +84,14 @@ def train_model(model, loader, optimizer, mlm_criterion, cls_criterion, epoch, d
 
 @torch.no_grad()
 def evaluate_model(model, loader, mlm_criterion, cls_criterion, epoch, device, logger, wandb_logger=None,\
-                   test_class_name=None, use_thresholds=True, mode='valid', mlm_lambda=0.5):
+                   test_class_name=None, use_thresholds=None, mode='valid', mlm_lambda=0.5, num_classes=100):
     model.eval()
     val_loss = 0.0 
     val_mlm_loss = 0.0
     val_cls_loss = 0.0
-    
-    total_pred = torch.empty((0, 100), device=device)
-    total_true = torch.empty((0, 100), device=device)
+    thresholds = None
+    total_pred = torch.empty((0, num_classes), device=device)
+    total_true = torch.empty((0, num_classes), device=device)
     
     for batch_data in loader:
         labels = batch_data['labels'].float().to(device)
@@ -116,33 +117,59 @@ def evaluate_model(model, loader, mlm_criterion, cls_criterion, epoch, device, l
     y_true, y_pred_prob = total_true.cpu().detach(), total_pred.cpu().detach()
     
     if mode == 'valid':
-        auc_dict = compute_average_auc(y_pred_prob, y_true, reduction='mean', use_thresholds=use_thresholds)
-        auc = auc_dict['auc']
-        thresholds = auc_dict['thresholds']
+        f1_recall_prec = compute_average_f1_score(y_pred_prob, y_true, reduction='macro', thresholds=thresholds)
+        f1 = f1_recall_prec['average_f1_score']
+        precision = f1_recall_prec['average_precision']
+        recall = f1_recall_prec['average_recall']
+        
+        if use_thresholds:
+            thresholds = f1_recall_prec['thresholds']
+        else:
+            thresholds = None        
+        
+        auc = compute_average_auc(y_pred_prob, y_true, reduction='mean')
         acc = compute_average_accuracy(y_pred_prob, y_true, reduction='mean', thresholds=thresholds)['accuracies']
+        
     elif mode == 'test':
-        auc_raw_dict = compute_average_auc(y_pred_prob, y_true, reduction='none', use_thresholds=use_thresholds)
-        auc_raw = auc_raw_dict['auc']
-        thresholds = auc_raw_dict['thresholds']
+        test_class_name = test_class_name
+        f1_recall_prec_raw = compute_average_f1_score(y_pred_prob, y_true, reduction='none', thresholds=thresholds)
+        f1_raw = f1_recall_prec_raw['average_f1_score']
+        prec_raw = f1_recall_prec_raw['average_precision']
+        rec_raw = f1_recall_prec_raw['average_recall']
+        
+        if use_thresholds:
+            thresholds = f1_recall_prec['thresholds']
+        else:
+            thresholds = None
+        
+        auc_raw = compute_average_auc(y_pred_prob, y_true, reduction='none')
         acc_raw = compute_average_accuracy(y_pred_prob, y_true, reduction='none', thresholds=thresholds)['accuracies']
-        acc_data = [[label, val] for (label, val) in zip(test_class_name, list(acc_raw))]
-        auc_data = [[label, val] for (label, val) in zip(test_class_name, list(auc_raw))]
+        
+        acc_data  = [[label, val] for (label, val) in zip(test_class_name, list(acc_raw))]
+        auc_data  = [[label, val] for (label, val) in zip(test_class_name, list(auc_raw))]
+        f1_data   = [[label, val] for (label, val) in zip(test_class_name, list(f1_raw))]
+        prec_data = [[label, val] for (label, val) in zip(test_class_name, list(prec_raw))]
+        rec_data  = [[label, val] for (label, val) in zip(test_class_name, list(rec_raw))]
         
         acc_table = wandb.Table(data=acc_data, columns = ["Diagnosis_name", "Accuracy"])
         auc_table = wandb.Table(data=auc_data, columns = ["Diagnosis_name", "AUC"])
+        f1_table = wandb.Table(data=f1_data, columns = ["Diagnosis_name", "F1"])
+        prec_table = wandb.Table(data=prec_data, columns = ["Diagnosis_name", "Precision"])
+        rec_table = wandb.Table(data=rec_data, columns = ["Diagnosis_name", "Recall"])
 
+        f1 = round(float(np.mean(f1_raw)), ndigits=4)
+        precision = round(float(np.mean(prec_raw)), ndigits=4)
+        recall = round(float(np.mean(rec_raw)), ndigits=4)
         acc = round(float(np.mean(acc_raw)), ndigits=4)
         auc = round(float(np.mean(auc_raw)), ndigits=4)
         
         wandb.log({"ACC_Chart" : wandb.plot.bar(acc_table, "Diagnosis_name", "Accuracy", title="Accuracy per class")})
         wandb.log({"AUC_Chart" : wandb.plot.bar(auc_table, "Diagnosis_name", "AUC", title="AUC per class")})
+        wandb.log({"F1_Chart" : wandb.plot.bar(f1_table, "Diagnosis_name", "F1", title="F1 per class")})
+        wandb.log({"Precision_Chart" : wandb.plot.bar(prec_table, "Diagnosis_name", "Precision", title="Precision per class")})
+        wandb.log({"Recall_Chart" : wandb.plot.bar(rec_table, "Diagnosis_name", "Recall", title="Recall per class")})
     else:
         raise ValueError('mode should be either valid or test')
-    
-    f1_recall_prec = compute_average_f1_score(y_pred_prob, y_true, reduction='macro', thresholds=thresholds)
-    f1 = f1_recall_prec['average_f1_score']
-    precision = f1_recall_prec['average_precision']
-    recall = f1_recall_prec['average_recall']
     
     logger.info(f'[Epoch {mode} {epoch}]: Total loss: {val_avg_loss:.4f} | MLM loss: {val_avg_mlm_loss:.4f} | CLS loss: {val_avg_cls_loss:.4f}')
     logger.info(f'[Epoch {mode} {epoch}]: Acuuracy: {acc:.4f}, AUC: {auc:.4f}, F1: {f1:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}')
@@ -198,14 +225,7 @@ def plot_roc_curve(y_true, y_score, class_names):
     roc_fig, ax = plt.subplots(figsize=(8, 6))
     fpr, tpr, thresholds = roc_curve(y_true, y_score)
     roc_auc = auc(fpr, tpr)
-    # get the best threshold
-    J = tpr - fpr
-    ix = np.argmax(J)
-    best_thresh = thresholds[ix]
-    sens, spec = tpr[ix], 1-fpr[ix]
     plt.plot(fpr, tpr, color='darkorange', lw=2, label='ROC curve (area = %0.3f)' % roc_auc)
-    plt.scatter(fpr[ix], tpr[ix], marker='+', s=20, color='r', 
-                label='Best threshold = %.3f, \nSensitivity (TPR) = %.3f, \nSpecificity (1-FPR) = %.3f' % (best_thresh, sens, spec))
     plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
     plt.xlim([0.0, 1.0])
     plt.ylim([0.0, 1.05])

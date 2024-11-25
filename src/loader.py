@@ -76,7 +76,7 @@ def collate_fn(batch, padding_value=0):
     
 
 class PretrainedEHRDataset(Dataset):
-    def __init__(self, data, mask_prob=0.15, mask_idx=5091, max_pred=10, max_len=400, padding_value=0):
+    def __init__(self, data, mask_prob=0.15, mask_idx=5091, max_pred=10, max_len=400, padding_value=0, num_classes=100, label_type='top'):
         self.mask_prob = mask_prob
         self.mask_idx = mask_idx
         self.max_pred = max_pred
@@ -91,6 +91,11 @@ class PretrainedEHRDataset(Dataset):
         self.mask_tokens = []
         self.mask_pos = []
         self.labels = []
+        
+        if label_type == 'top':
+            label_key = f'label_{label_type}{num_classes}'
+        else:
+            label_key = f'label__{label_type}{num_classes}'
         
         # self.seq_len = [d['total_len'] for _, d in data.items()]
         # max_seq_len = max(self.seq_len)
@@ -117,7 +122,7 @@ class PretrainedEHRDataset(Dataset):
             self.times.append(F.pad(timevec, (0, 0, 0, max_seq_len - seq_len), "constant", 0))
             self.mask_tokens.append(mask_tokens)
             self.mask_pos.append(mask_pos)
-            self.labels.append(torch.tensor(patient_data['label'], dtype=torch.float32))  # 환자의 라벨 저장
+            self.labels.append(torch.tensor(patient_data[label_key], dtype=torch.float32))  # 환자의 라벨 저장
             idx += 1
         
     def masked_code(self, seq_data, code_types):
