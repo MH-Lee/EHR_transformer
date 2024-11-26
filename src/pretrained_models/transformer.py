@@ -45,7 +45,12 @@ class BERT(nn.Module):
         self.classify_layer = nn.Linear(embed_dim, num_classes)
         self.act2 = nn.GELU()
         self.fc1 = nn.Linear(embed_dim, embed_dim)
-        self.fc2 = nn.Linear(embed_dim, embed_dim)
+        
+        if self.pool_type == 'concat':
+            self.fc2 = nn.Linear(2*embed_dim, embed_dim)
+        else:
+            self.fc2 = nn.Linear(embed_dim, embed_dim)
+        
         self.layer_norm = nn.LayerNorm(embed_dim)
         
     def forward(self, batch):
@@ -67,6 +72,11 @@ class BERT(nn.Module):
             non_zero = ((batch['code_types'] != 4) & (batch['code_types'] != 0)).float().unsqueeze(2).to(self.device)
             mean_pool = (encoder_output * non_zero).sum(1) / non_zero.sum(1)
             h_pooled = self.act1(self.fc2(mean_pool)) # [batch_size, d_model]
+        elif self.pool_type == 'concat':
+            non_zero = ((batch['code_types'] != 4) & (batch['code_types'] != 0)).float().unsqueeze(2).to(self.device)
+            mean_pool = (encoder_output * non_zero).sum(1) / non_zero.sum(1)
+            cls_pool = encoder_output[:, 0, :]
+            concat_pool = torch.cat([cls_pool, mean_pool], dim=1)
         elif self.pool_type == 'cls':
             h_pooled = self.act1(self.fc2(encoder_output[:, 0, :])) # [batch_size, d_model]
         else:

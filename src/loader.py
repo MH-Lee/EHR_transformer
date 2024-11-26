@@ -95,7 +95,7 @@ class PretrainedEHRDataset(Dataset):
         if label_type == 'top':
             label_key = f'label_{label_type}{num_classes}'
         else:
-            label_key = f'label__{label_type}{num_classes}'
+            label_key = f'label_{label_type}{num_classes}'
         
         # self.seq_len = [d['total_len'] for _, d in data.items()]
         # max_seq_len = max(self.seq_len)
