@@ -84,7 +84,7 @@ def train_model(model, loader, optimizer, mlm_criterion, cls_criterion, epoch, d
 
 @torch.no_grad()
 def evaluate_model(model, loader, mlm_criterion, cls_criterion, epoch, device, logger, wandb_logger=None,\
-                   test_class_name=None, use_thresholds=None, mode='valid', mlm_lambda=0.5, num_classes=100):
+                   test_class_name=None, use_thresholds=True, mode='valid', mlm_lambda=0.5, num_classes=100):
     model.eval()
     val_loss = 0.0 
     val_mlm_loss = 0.0
@@ -138,7 +138,7 @@ def evaluate_model(model, loader, mlm_criterion, cls_criterion, epoch, device, l
         rec_raw = f1_recall_prec_raw['average_recall']
         
         if use_thresholds:
-            thresholds = f1_recall_prec['thresholds']
+            thresholds = f1_recall_prec_raw['thresholds']
         else:
             thresholds = None
         
@@ -190,7 +190,7 @@ def evaluate_model(model, loader, mlm_criterion, cls_criterion, epoch, device, l
                 plt.close(cm_fig)
                 plt.close(roc_fig)
             else:
-                y_pred = total_pred[:, i].ge(thresholds[i]).float().numpy()
+                y_pred = y_pred_prob[:, i].ge(thresholds[i]).float().numpy()
                 cm_fig, ax = plot_confusion_matrix(y_true[:, i].numpy(), y_pred, test_class_name[i])
                 roc_fig, ax = plot_roc_curve(y_true[:, i].numpy(), y_pred_prob[:, i].numpy(), test_class_name[i])
                 cm_plot_dict[f'ConfusionMatrix/Confusion matrix {test_class_name[i]}'] = cm_fig

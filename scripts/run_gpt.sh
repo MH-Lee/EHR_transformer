@@ -9,13 +9,13 @@ EPOCHS=100
 NUM_HEADS=8
 NUM_LAYERS=4
 NUM_CLASSES=10
-LABEL_TYPE=bot
+LABEL_TYPE=top
 ATTN_DROPOUT=0.3
 DROPOUT=0.2
 MLM_LAMBDA=0.35
 GAMMA=0.0
 ALPHA=0.2
-POOL_TYPE=mean
+POOL_TYPE=concat
 EXP_NUM=3
 DEVICE=cuda:1
 
@@ -40,5 +40,6 @@ python -u pretrained_main.py \
         --device $DEVICE \
         --mlm_lambda $MLM_LAMBDA \
         --pool_type $POOL_TYPE \
+        --use_thresholds \
         --use_pretrained \
         --use_wandb

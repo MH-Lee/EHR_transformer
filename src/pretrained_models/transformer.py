@@ -37,11 +37,13 @@ class BERT(nn.Module):
         self.visit_segment_emb = Embedding(51, embed_dim, padding_idx=50)
         self.code_type_emb = Embedding(5, embed_dim, padding_idx=0)
         self.time_emb = TimeEncoder(embed_dim, device)
-        
+        nn.init.xavier_normal_(self.visit_segment_emb.weight.data)
+        nn.init.xavier_normal_(self.code_type_emb.weight.data)        
         self.act1 = nn.ReLU()
         encoder_layer = nn.TransformerEncoderLayer(d_model=embed_dim, nhead=num_heads, dropout=attn_dropout,
                                                    dim_feedforward=hidden_dim, batch_first=True, activation='gelu')
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.encoder.apply(self.reset_parameters)
         self.classify_layer = nn.Linear(embed_dim, num_classes)
         self.act2 = nn.GELU()
         self.fc1 = nn.Linear(embed_dim, embed_dim)
@@ -52,7 +54,23 @@ class BERT(nn.Module):
             self.fc2 = nn.Linear(embed_dim, embed_dim)
         
         self.layer_norm = nn.LayerNorm(embed_dim)
-        
+    
+    def reset_parameters(self, module):
+        if isinstance(module, nn.Linear):
+            nn.init.xavier_uniform_(module.weight)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.LayerNorm):
+            nn.init.ones_(module.weight)
+            nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.MultiheadAttention):
+            nn.init.xavier_uniform_(module.in_proj_weight)
+            nn.init.xavier_uniform_(module.out_proj.weight)
+            if module.in_proj_bias is not None:
+                nn.init.zeros_(module.in_proj_bias)
+            if module.out_proj.bias is not None:
+                nn.init.zeros_(module.out_proj.bias)
+    
     def forward(self, batch):
         code_embs = self.code_emb(batch['masked_visit_seq'].to(self.device))
         code_embs_pos = self.positional_encoding(code_embs.to(self.device))
@@ -77,6 +95,7 @@ class BERT(nn.Module):
             mean_pool = (encoder_output * non_zero).sum(1) / non_zero.sum(1)
             cls_pool = encoder_output[:, 0, :]
             concat_pool = torch.cat([cls_pool, mean_pool], dim=1)
+            h_pooled = self.act1(self.fc2(concat_pool)) # [batch_size, d_model]
         elif self.pool_type == 'cls':
             h_pooled = self.act1(self.fc2(encoder_output[:, 0, :])) # [batch_size, d_model]
         else:
