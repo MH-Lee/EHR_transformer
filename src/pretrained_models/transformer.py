@@ -29,9 +29,9 @@ class BERT(nn.Module):
             self.code_emb = Embedding(vocab_size, embed_dim, padding_idx=0)
         else:
             self.pretrained_emb = pretrained_emb[:, :embed_dim]
-            self.diag_size = self.pretrained_emb.size(0)
+            self.diag_size = self.pretrained_emb.size(0) + 1
             self.code_emb = Embedding(vocab_size, embed_dim, padding_idx=0)
-            self.code_emb.weight.data[0:self.diag_size] = self.pretrained_emb
+            self.code_emb.weight.data[1:self.diag_size] = self.pretrained_emb
             
         self.positional_encoding = PositionalEncoding(embed_dim, dropout_rate, max_len)
         self.visit_segment_emb = Embedding(51, embed_dim, padding_idx=50)

@@ -39,7 +39,7 @@ def train_model(model, loader, optimizer, mlm_criterion, cls_criterion, epoch, d
         loss.backward()
         if diag_freeze:
             # import pdb; pdb.set_trace()
-            model.code_emb.weight.grad[0:870] = 0
+            model.code_emb.weight.grad[0:864] = 0
         optimizer.step()
         
         train_mlm_loss += (mlm_loss_mean.item() * mlm_lambda)

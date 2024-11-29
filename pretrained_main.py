@@ -22,7 +22,7 @@ from pprint import pprint
 from datetime import datetime
 import os.path as osp
 import wandb
-
+import pandas as pd
 
 
 torch.set_printoptions(profile="full")
@@ -51,6 +51,16 @@ class Runner:
         self.logger.info(f'device: {self.device}')
         self.date_str = datetime.now().strftime("%Y%m%d")
         self.code_idx = pickle.load(open(osp.join(args.data_dir, 'code_indices', 'code_dict_pretrained.pkl'), 'rb'))
+        self.emb_name = list(self.code_idx.keys())[1:5089]
+        self.col_name = ['dim_' + str(i) for i in range(self.args.embed_dim)]
+        self.align_col_name = ['code_name'] + self.col_name + ['code_type']
+        self.emb_type_list = [
+            "diagnosis" if item.startswith("d_") else
+            "procedure" if item.startswith("pcs") else
+            "drug" if item.startswith("p_") else item
+            for item in self.emb_name
+        ]
+        
         self.load_data(pretraine_type=args.pretrained_type, load_pretrained=args.use_pretrained)
         if self.args.use_pretrained:
             self.model = BERT(vocab_size=len(self.code_idx), pretrained_emb=self.gpt4o_emb.float(),
@@ -144,11 +154,11 @@ class Runner:
 
         if load_pretrained:
             if pretraine_type == 'te3-small':
-                self.gpt4o_emb = pickle.load(open(osp.join(self.args.data_dir, 'gpt_emb', 'gpt4o_te3_small_v2.pkl'), 'rb'))
+                self.gpt4o_emb = pickle.load(open(osp.join(self.args.data_dir, 'gpt_emb', 'gpt4o_te3_small_v3.pkl'), 'rb'))
             elif pretraine_type == 'te3-large':
-                self.gpt4o_emb = pickle.load(open(osp.join(self.args.data_dir, 'gpt_emb', 'gpt4o_te3_large_v2.pkl'), 'rb'))
+                self.gpt4o_emb = pickle.load(open(osp.join(self.args.data_dir, 'gpt_emb', 'gpt4o_te3_large_v3.pkl'), 'rb'))
             elif pretraine_type == 'te-ada002':
-                self.gpt4o_emb = pickle.load(open(osp.join(self.args.data_dir, 'gpt_emb', 'gpt4o_te_ada002_v2.pkl'), 'rb'))
+                self.gpt4o_emb = pickle.load(open(osp.join(self.args.data_dir, 'gpt_emb', 'gpt4o_te_ada002_v3.pkl'), 'rb'))
             else:
                 raise NotImplementedError(f'{pretraine_type} is not implemented')
         
@@ -195,6 +205,14 @@ class Runner:
             val_loss_list.append(valid_log['loss'])
             val_mlm_loss_list.append(valid_log['mlm_loss'])
             val_cls_loss_list.append(valid_log['cls_loss'])
+            
+            if epoch % 20 == 0:
+                code_emb = self.model.code_emb.weight.data[1:5089].cpu().detach().numpy()
+                emb_df = pd.DataFrame(code_emb, columns=self.col_name)
+                emb_df['code_name'] = self.emb_name
+                emb_df['code_type'] = self.emb_type_list
+                emb_df = emb_df[self.align_col_name]
+                self.writer.log({f"embeddings_{epoch}/code_embedding": wandb.Table(dataframe=emb_df)})
             
             current_score = valid_log['auc']
             if current_score > self.best_val:
