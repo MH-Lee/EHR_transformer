@@ -29,11 +29,12 @@ def train_model(model, loader, optimizer, mlm_criterion, cls_criterion, epoch, d
             selected_emb = model.code_emb(mlm_tokens)
             mlm_loss = mlm_criterion(mlm_output, selected_emb)
             mlm_loss = mlm_loss * mlm_masks.unsqueeze(2)
+            mlm_loss_mean = (mlm_loss.sum() / mlm_masks.sum())
             # import pdb; pdb.set_trace()
         else:
             mlm_loss = mlm_criterion(mlm_output.transpose(1,2), mlm_tokens)
+            mlm_loss_mean = (mlm_loss * mlm_masks).sum() / mlm_masks.sum()
             
-        mlm_loss_mean = (mlm_loss.sum() / mlm_masks.sum())
         cls_loss = cls_criterion(logits_cls, labels)
         
         pred_probas = torch.sigmoid(logits_cls)
@@ -110,10 +111,11 @@ def evaluate_model(model, loader, mlm_criterion, cls_criterion, epoch, device, l
             selected_emb = model.code_emb(mlm_tokens)
             mlm_loss = mlm_criterion(mlm_output, selected_emb)
             mlm_loss = mlm_loss * mlm_masks.unsqueeze(2)
+            mlm_loss_mean = (mlm_loss.sum() / mlm_masks.sum())
         else:
             mlm_loss = mlm_criterion(mlm_output.transpose(1,2), mlm_tokens)
+            mlm_loss_mean = (mlm_loss * mlm_masks).sum() / mlm_masks.sum()
         
-        mlm_loss_mean = (mlm_loss * mlm_masks).sum() / mlm_masks.sum()
         cls_loss = cls_criterion(logits_cls, labels)
         
         pred_probas = torch.sigmoid(logits_cls)
