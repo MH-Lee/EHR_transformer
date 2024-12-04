@@ -2,7 +2,7 @@ import math
 import torch
 import torch.nn as nn
 from .embed import PositionalEncoding, TimeEncoder
-
+              
 
 class Embedding(nn.Embedding):
     def __init__(self, num_embeddings, embedding_dim, padding_idx=None,
@@ -21,10 +21,11 @@ class Embedding(nn.Embedding):
 
 class BERT(nn.Module):
     def __init__(self, vocab_size, embed_dim, num_heads, hidden_dim, num_layers, max_len=50, num_classes=100, 
-                 attn_dropout=0.1, dropout_rate=0.1, device='cpu', pool_type='mean', pretrained_emb=None):
+                 attn_dropout=0.1, dropout_rate=0.1, device='cpu', pool_type='mean', pretrained_emb=None, mlm_loss_type='ce'):
         super(BERT, self).__init__()
         self.device = device
         self.pool_type = pool_type
+        self.mlm_loss_type = mlm_loss_type
         if pretrained_emb is None:
             self.code_emb = Embedding(vocab_size, embed_dim, padding_idx=0)
         else:
@@ -33,18 +34,28 @@ class BERT(nn.Module):
             self.code_emb = Embedding(vocab_size, embed_dim, padding_idx=0)
             self.code_emb.weight.data[1:self.diag_size] = self.pretrained_emb
             
-        self.positional_encoding = PositionalEncoding(embed_dim, dropout_rate, max_len)
-        self.visit_segment_emb = Embedding(51, embed_dim, padding_idx=50)
-        self.code_type_emb = Embedding(5, embed_dim, padding_idx=0)
+        # self.positional_encoding = PositionalEncoding(embed_dim, dropout_rate, max_len)
+        # self.visit_segment_emb = nn.Embedding(51, embed_dim, padding_idx=50)
+        # nn.init.xavier_normal_(self.visit_segment_emb.weight.data)÷
+        self.code_type_emb = nn.Embedding(5, embed_dim, padding_idx=0)
+        nn.init.kaiming_normal_(self.code_type_emb.weight.data)        
         self.time_emb = TimeEncoder(embed_dim, device)
-        nn.init.xavier_normal_(self.visit_segment_emb.weight.data)
-        nn.init.xavier_normal_(self.code_type_emb.weight.data)        
+  
         self.act1 = nn.ReLU()
-        encoder_layer = nn.TransformerEncoderLayer(d_model=embed_dim, nhead=num_heads, dropout=attn_dropout,
-                                                   dim_feedforward=hidden_dim, batch_first=True, activation='gelu')
+        encoder_layer = nn.TransformerEncoderLayer(d_model=embed_dim, 
+                                                   nhead=num_heads, 
+                                                   dropout=attn_dropout,
+                                                   dim_feedforward=hidden_dim, 
+                                                   batch_first=True,
+                                                   activation='gelu')
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.encoder.apply(self.reset_parameters)
+        
+        if self.mlm_loss_type == 'ce':
+            self.mlm_layer = nn.Linear(embed_dim, vocab_size)
+        
         self.classify_layer = nn.Linear(embed_dim, num_classes)
+        
         self.act2 = nn.GELU()
         self.fc1 = nn.Linear(embed_dim, embed_dim)
         
@@ -57,15 +68,15 @@ class BERT(nn.Module):
     
     def reset_parameters(self, module):
         if isinstance(module, nn.Linear):
-            nn.init.xavier_uniform_(module.weight)
+            nn.init.kaiming_normal_(module.weight)
             if module.bias is not None:
                 nn.init.zeros_(module.bias)
         elif isinstance(module, nn.LayerNorm):
             nn.init.ones_(module.weight)
             nn.init.zeros_(module.bias)
         elif isinstance(module, nn.MultiheadAttention):
-            nn.init.xavier_uniform_(module.in_proj_weight)
-            nn.init.xavier_uniform_(module.out_proj.weight)
+            nn.init.kaiming_normal_(module.in_proj_weight)
+            nn.init.kaiming_normal_(module.out_proj.weight)
             if module.in_proj_bias is not None:
                 nn.init.zeros_(module.in_proj_bias)
             if module.out_proj.bias is not None:
@@ -73,18 +84,26 @@ class BERT(nn.Module):
     
     def forward(self, batch):
         code_embs = self.code_emb(batch['masked_visit_seq'].to(self.device))
-        code_embs_pos = self.positional_encoding(code_embs.to(self.device))
-        visit_seg = self.visit_segment_emb(batch['visit_segments'].to(self.device))
+        # code_embs_pos = self.positional_encoding(code_embs.to(self.device))
+        # visit_seg = self.visit_segment_emb(batch['visit_segments'].to(self.device))
         code_types = self.code_type_emb(batch['code_types'].to(self.device))
         timedelta_emb = self.time_emb(batch['time_delta'].to(self.device),
                                       batch['seq_mask'].unsqueeze(2).to(self.device))
-        input_embs = code_embs_pos + visit_seg + code_types + timedelta_emb
+        input_embs = code_embs + code_types + timedelta_emb
         
         encoder_output = self.encoder(input_embs, src_key_padding_mask=batch['seq_mask'].to(self.device))
         mlm_pos = batch['mask_pos'][:, :, None].expand(-1, -1, encoder_output.size(-1)).long()
         h_masked = torch.gather(encoder_output, 1, mlm_pos.to(self.device)) # masking position [batch_size, max_pred, d_model]
         h_masked = self.layer_norm(self.act2(self.fc1(h_masked))) # masking position [batch_size, max_pred, d_model]
-        mlm_output = h_masked @ self.code_emb.weight.data.t() # masking position [batch_size, max_pred, n_diag]
+        
+        if self.mlm_loss_type == 'ce':
+            mlm_output = self.mlm_layer(h_masked)
+            # mlm_output = h_masked @ self.code_emb.weight.data.t() # masking position [batch_size, max_pred, vocab_size]
+        elif self.mlm_loss_type == 'mse':
+            mlm_output = h_masked
+        else:
+            raise ValueError("Invalid mlm loss type selected %s" % self.mlm_loss_type)
+        
         if self.pool_type == 'mean':
             # import pdb; pdb.set_trace()
             non_zero = ((batch['code_types'] != 4) & (batch['code_types'] != 0)).float().unsqueeze(2).to(self.device)
@@ -106,4 +125,5 @@ class BERT(nn.Module):
         
         if torch.isnan(mlm_output).any():
             import pdb; pdb.set_trace()
+            
         return mlm_output, logits_cls

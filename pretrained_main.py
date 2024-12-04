@@ -23,6 +23,8 @@ from datetime import datetime
 import os.path as osp
 import wandb
 import pandas as pd
+from umap import UMAP
+from sklearn.decomposition import PCA
 
 
 torch.set_printoptions(profile="full")
@@ -52,8 +54,9 @@ class Runner:
         self.date_str = datetime.now().strftime("%Y%m%d")
         self.code_idx = pickle.load(open(osp.join(args.data_dir, 'code_indices', 'code_dict_pretrained.pkl'), 'rb'))
         self.emb_name = list(self.code_idx.keys())[1:5089]
-        self.col_name = ['dim_' + str(i) for i in range(self.args.embed_dim)]
-        self.align_col_name = ['code_name'] + self.col_name + ['code_type']
+        # self.col_name = ['dim_' + str(i) for i in range(self.args.embed_dim)]        
+        # self.align_col_name = ['code_name'] + self.col_name + ['code_type']
+        
         self.emb_type_list = [
             "diagnosis" if item.startswith("d_") else
             "procedure" if item.startswith("pcs") else
@@ -67,18 +70,25 @@ class Runner:
                               embed_dim=self.args.embed_dim, num_heads=self.args.num_heads,\
                               hidden_dim=self.args.ffn_dim, num_layers=self.args.num_layers, \
                               max_len=self.args.max_len, attn_dropout=self.args.attn_dropout, \
-                              dropout_rate=self.args.dropout_rate, device=self.device, \
-                              pool_type=self.args.pool_type, num_classes=self.args.num_classes).to(self.device)
+                              dropout_rate=self.args.dropout_rate, device=self.device, pool_type=self.args.pool_type,\
+                              num_classes=self.args.num_classes, mlm_loss_type=self.args.mlm_loss_type).to(self.device)
         else:
             self.model = BERT(vocab_size=len(self.code_idx), embed_dim=self.args.embed_dim, \
                               num_heads=self.args.num_heads, hidden_dim=self.args.ffn_dim, \
                               num_layers=self.args.num_layers, max_len=self.args.max_len, \
                               attn_dropout=self.args.attn_dropout, dropout_rate=self.args.dropout_rate, \
-                              device=self.device, pool_type=self.args.pool_type, \
-                              num_classes=self.args.num_classes).to(self.device)
+                              device=self.device, pool_type=self.args.pool_type, num_classes=self.args.num_classes,\
+                              mlm_loss_type=self.args.mlm_loss_type).to(self.device)
 
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=args.lr)
-        self.mlm_criterion = nn.CrossEntropyLoss(reduction='none', ignore_index=0)
+        
+        if self.args.mlm_loss_type == 'ce':
+            self.mlm_criterion = nn.CrossEntropyLoss(reduction='none', ignore_index=0)
+        elif self.args.mlm_loss_type == 'mse':
+            self.mlm_criterion = nn.MSELoss(reduction='none')
+        else:
+            raise NotImplementedError(f'{self.args.mlm_loss_type} is not implemented')
+            
         if self.args.loss_type == 'bce':
             self.cls_criterion = nn.BCEWithLogitsLoss()
         elif self.args.loss_type == 'balanced_bce':
@@ -186,7 +196,8 @@ class Runner:
                                     use_thresholds=self.args.use_thresholds,
                                     mlm_lambda=self.args.mlm_lambda,
                                     diag_freeze=self.args.diag_freeze,
-                                    num_classes=self.args.num_classes,)
+                                    num_classes=self.args.num_classes,
+                                    mlm_loss_type=self.args.mlm_loss_type)
             valid_log = evaluate_model(model=self.model, 
                                        loader=self.valid_loader,
                                        mlm_criterion=self.mlm_criterion, 
@@ -198,6 +209,7 @@ class Runner:
                                        use_thresholds=self.args.use_thresholds,
                                        mlm_lambda=self.args.mlm_lambda,
                                        num_classes=self.args.num_classes,
+                                       mlm_loss_type=self.args.mlm_loss_type,
                                        mode='valid')
             tr_loss_list.append(train_log['loss'])
             tr_mlm_loss_list.append(train_log['mlm_loss'])
@@ -208,11 +220,21 @@ class Runner:
             
             if epoch % 20 == 0:
                 code_emb = self.model.code_emb.weight.data[1:5089].cpu().detach().numpy()
-                emb_df = pd.DataFrame(code_emb, columns=self.col_name)
-                emb_df['code_name'] = self.emb_name
-                emb_df['code_type'] = self.emb_type_list
-                emb_df = emb_df[self.align_col_name]
-                self.writer.log({f"embeddings_{epoch}/code_embedding": wandb.Table(dataframe=emb_df)})
+                pca_model = PCA(n_components=2, random_state=self.args.seed)
+                umap_model = UMAP(n_components=2, n_neighbors=15, min_dist=0.1, metric='cosine', random_state=self.args.seed)
+                code_emb_pca = pca_model.fit_transform(code_emb)
+                code_emb_umap = umap_model.fit_transform(code_emb)
+                
+                emb_df_pca = pd.DataFrame(code_emb_pca, columns=['projection_x1', 'projection_x2'])
+                emb_df_umap = pd.DataFrame(code_emb_umap, columns=['projection_x1', 'projection_x2'])
+                
+                emb_df_pca['code_name'] = self.emb_name
+                emb_df_pca['code_type'] = self.emb_type_list
+                emb_df_umap['code_name'] = self.emb_name
+                emb_df_umap['code_type'] = self.emb_type_list
+                
+                self.writer.log({f"embeddings_{epoch}/code_embedding_pca": wandb.Table(dataframe=emb_df_pca)})
+                self.writer.log({f"embeddings_{epoch}/code_embedding_umap": wandb.Table(dataframe=emb_df_umap)})
             
             current_score = valid_log['auc']
             if current_score > self.best_val:
@@ -273,6 +295,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_classes', type=int, default=100, help='number of classes')
     parser.add_argument('--label_type', type=str, default='top', help='class label type [top, bot]')   
     parser.add_argument('--loss_type', type=str, default='bce', help='loss type')
+    parser.add_argument('--mlm_loss_type', type=str, default='ce', help='mlm loss type')
     parser.add_argument('--attn_dropout', type=float, default=0.3, help='attention dropout ratio')
     parser.add_argument('--dropout_rate', type=float, default=0.2, help='dropout ratio')
     parser.add_argument('--alpha', type=float, default=None, help='alpha for balanced bce or focal loss')
@@ -352,6 +375,7 @@ if __name__ == '__main__':
             'num_workers'       : args.num_workers,
             'dim_feedforward'   : args.ffn_dim,
             'loss_type'         : args.loss_type,
+            'mlm_loss_type'     : args.mlm_loss_type,
             'alpha'             : args.alpha,
             'gamma'             : args.gamma,
             'patience'          : args.patience,
@@ -359,7 +383,7 @@ if __name__ == '__main__':
             'pretrained_type'   : args.pretrained_type,
             'diag_freeze'       : args.diag_freeze,
             'mlm_lambda'        : args.mlm_lambda,
-            'pool_type'         : args.pool_type,
+            'pool_type'         : args.pool_type
         }
         
         writer = wandb.init(project='EHR-Project-New', name=wandb_name, config=wandb_config, 

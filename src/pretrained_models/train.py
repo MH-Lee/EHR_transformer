@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 
 
 def train_model(model, loader, optimizer, mlm_criterion, cls_criterion, epoch, device, logger, wandb_logger=None, \
-                use_thresholds=True, diag_freeze=False, mlm_lambda=0.5, num_classes=100):
+                use_thresholds=True, diag_freeze=False, mlm_lambda=0.5, num_classes=100, mlm_loss_type='ce'):
     # 모델을 학습하기 위한 함수
     model.train()
     train_loss = 0.0
@@ -25,7 +25,14 @@ def train_model(model, loader, optimizer, mlm_criterion, cls_criterion, epoch, d
         mlm_tokens = batch_data['mask_tokens'].to(device)
         mlm_masks = (mlm_tokens != 0).long()
         # import pdb; pdb.set_trace()
-        mlm_loss = mlm_criterion(mlm_output.transpose(1,2), mlm_tokens)
+        if mlm_loss_type == 'mse':
+            selected_emb = model.code_emb(mlm_tokens)
+            mlm_loss = mlm_criterion(mlm_output, selected_emb)
+            mlm_loss = mlm_loss * mlm_masks.unsqueeze(2)
+            # import pdb; pdb.set_trace()
+        else:
+            mlm_loss = mlm_criterion(mlm_output.transpose(1,2), mlm_tokens)
+            
         mlm_loss_mean = (mlm_loss.sum() / mlm_masks.sum())
         cls_loss = cls_criterion(logits_cls, labels)
         
@@ -84,7 +91,7 @@ def train_model(model, loader, optimizer, mlm_criterion, cls_criterion, epoch, d
 
 @torch.no_grad()
 def evaluate_model(model, loader, mlm_criterion, cls_criterion, epoch, device, logger, wandb_logger=None,\
-                   test_class_name=None, use_thresholds=True, mode='valid', mlm_lambda=0.5, num_classes=100):
+                   test_class_name=None, use_thresholds=True, mode='valid', mlm_lambda=0.5, num_classes=100, mlm_loss_type='ce'):
     model.eval()
     val_loss = 0.0 
     val_mlm_loss = 0.0
@@ -98,7 +105,14 @@ def evaluate_model(model, loader, mlm_criterion, cls_criterion, epoch, device, l
         mlm_output, logits_cls = model(batch_data)
         mlm_tokens = batch_data['mask_tokens'].to(device)
         mlm_masks = (mlm_tokens != 0).long()
-        mlm_loss = mlm_criterion(mlm_output.transpose(1,2), mlm_tokens)
+        
+        if mlm_loss_type == 'mse':
+            selected_emb = model.code_emb(mlm_tokens)
+            mlm_loss = mlm_criterion(mlm_output, selected_emb)
+            mlm_loss = mlm_loss * mlm_masks.unsqueeze(2)
+        else:
+            mlm_loss = mlm_criterion(mlm_output.transpose(1,2), mlm_tokens)
+        
         mlm_loss_mean = (mlm_loss * mlm_masks).sum() / mlm_masks.sum()
         cls_loss = cls_criterion(logits_cls, labels)
         

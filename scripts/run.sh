@@ -1,13 +1,14 @@
 BATCH_SIZE=256
 LEARNING_RATE=5e-4
 MASK_PROB=0.15
-DIM_FEEDFORWARD=2048
+DIM_FEEDFORWARD=1024
 LOSS_TYPE=balanced_bce
-EMB_DIM=256
+MLM_LOSS_TYPE=mse
+EMB_DIM=128
 EPOCHS=100
 NUM_HEADS=8
 NUM_LAYERS=4
-NUM_CLASSES=10
+NUM_CLASSES=80
 LABEL_TYPE=top
 ATTN_DROPOUT=0.3
 DROPOUT=0.2
@@ -26,6 +27,7 @@ python -u pretrained_main.py \
             --mask_prob $MASK_PROB \
             --ffn_dim $DIM_FEEDFORWARD \
             --loss_type $LOSS_TYPE \
+            --mlm_loss_type $MLM_LOSS_TYPE \
             --num_heads $NUM_HEADS \
             --num_layers $NUM_LAYERS \
             --num_classes $NUM_CLASSES \
