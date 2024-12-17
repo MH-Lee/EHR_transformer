@@ -25,11 +25,12 @@ import wandb
 import pandas as pd
 from umap import UMAP
 from sklearn.decomposition import PCA
-
+from numba.core.errors import NumbaWarning
 
 torch.set_printoptions(profile="full")
 np.set_printoptions(threshold=sys.maxsize)
 warnings.filterwarnings("ignore")
+warnings.simplefilter('ignore', category=NumbaWarning)
 torch.autograd.set_detect_anomaly(True) 
 
 
