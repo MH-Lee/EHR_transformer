@@ -33,13 +33,13 @@ class BERT(nn.Module):
             self.pretrained_emb = pretrained_emb[:, :embed_dim]
             self.diag_size = self.pretrained_emb.size(0) + 1
             self.code_emb = Embedding(vocab_size, embed_dim, padding_idx=0)
+            init_std = self.code_emb.weight.std().item()
+            self.pretrained_emb = (self.pretrained_emb - self.pretrained_emb.mean()) / self.pretrained_emb.std() * init_std
             self.code_emb.weight.data[1:self.diag_size] = self.pretrained_emb
             
         self.positional_encoding = PositionalEncoding(embed_dim, dropout_rate, max_len)
         self.visit_segment_emb = nn.Embedding(51, embed_dim, padding_idx=50)
-        # nn.init.kaiming_normal_(self.visit_segment_emb.weight.data)        
         self.code_type_emb = nn.Embedding(5, embed_dim, padding_idx=0)
-        # nn.init.kaiming_normal_(self.code_type_emb.weight.data)        
         self.time_emb = TimeEncoder(embed_dim, device)
   
         self.act1 = nn.ReLU()
