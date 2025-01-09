@@ -16,3 +16,4 @@ wandb/
 exp_setting/
 *.log
 results_summary/
+.ipynb_checkpoints/

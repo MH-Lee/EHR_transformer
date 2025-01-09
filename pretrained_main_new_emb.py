@@ -22,12 +22,15 @@ from pprint import pprint
 from datetime import datetime
 import os.path as osp
 import wandb
-
-
+import pandas as pd
+from umap import UMAP
+from sklearn.decomposition import PCA
+from numba.core.errors import NumbaWarning
 
 torch.set_printoptions(profile="full")
 np.set_printoptions(threshold=sys.maxsize)
 warnings.filterwarnings("ignore")
+warnings.simplefilter('ignore', category=NumbaWarning)
 torch.autograd.set_detect_anomaly(True) 
 
 
@@ -45,29 +48,46 @@ class Runner:
         else:
             self.device = torch.device('cpu')
         
-        self.labels_list = pickle.load(open(osp.join(args.data_dir, 'top_100_list.pkl'), 'rb'))
+        self.labels_list = sorted(pickle.load(open(osp.join(args.data_dir, f'top_{self.args.num_classes}_list.pkl'), 'rb')))
         
         self.seed = args.seed
         self.logger.info(f'device: {self.device}')
         self.date_str = datetime.now().strftime("%Y%m%d")
         self.code_idx = pickle.load(open(osp.join(args.data_dir, 'code_indices', 'code_dict_pretrained.pkl'), 'rb'))
+        self.emb_name = list(self.code_idx.keys())[1:5089]
+        
+        self.emb_type_list = [
+            "diagnosis" if item.startswith("d_") else
+            "procedure" if item.startswith("pcs") else
+            "drug" if item.startswith("p_") else item
+            for item in self.emb_name
+        ]
+        
         self.load_data(pretraine_type=args.pretrained_type, load_pretrained=args.use_pretrained)
         if self.args.use_pretrained:
             self.model = BERT(vocab_size=len(self.code_idx), pretrained_emb=self.gpt4o_emb.float(),
                               embed_dim=self.args.embed_dim, num_heads=self.args.num_heads,\
                               hidden_dim=self.args.ffn_dim, num_layers=self.args.num_layers, \
                               max_len=self.args.max_len, attn_dropout=self.args.attn_dropout, \
-                              dropout_rate=self.args.dropout_rate, device=self.device, \
-                              num_classes=self.args.num_classes).to(self.device)
+                              dropout_rate=self.args.dropout_rate, device=self.device, pool_type=self.args.pool_type,\
+                              num_classes=self.args.num_classes, mlm_loss_type=self.args.mlm_loss_type).to(self.device)
         else:
             self.model = BERT(vocab_size=len(self.code_idx), embed_dim=self.args.embed_dim, \
                               num_heads=self.args.num_heads, hidden_dim=self.args.ffn_dim, \
                               num_layers=self.args.num_layers, max_len=self.args.max_len, \
                               attn_dropout=self.args.attn_dropout, dropout_rate=self.args.dropout_rate, \
-                              device=self.device, num_classes=self.args.num_classes).to(self.device)
+                              device=self.device, pool_type=self.args.pool_type, num_classes=self.args.num_classes,\
+                              mlm_loss_type=self.args.mlm_loss_type).to(self.device)
 
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=args.lr)
-        self.mlm_criterion = nn.CrossEntropyLoss(reduction='none', ignore_index=0)
+        
+        if self.args.mlm_loss_type == 'ce':
+            self.mlm_criterion = nn.CrossEntropyLoss(reduction='none', ignore_index=0)
+        elif self.args.mlm_loss_type == 'mse':
+            self.mlm_criterion = nn.MSELoss(reduction='none')
+        else:
+            raise NotImplementedError(f'{self.args.mlm_loss_type} is not implemented')
+            
         if self.args.loss_type == 'bce':
             self.cls_criterion = nn.BCEWithLogitsLoss()
         elif self.args.loss_type == 'balanced_bce':
@@ -119,20 +139,20 @@ class Runner:
         self.logger.info(f'Model loaded from {load_path}')
 
     def load_data(self, pretraine_type='te3-small', load_pretrained=False):
-        if osp.isfile(osp.join(self.args.data_dir, 'split_dataset_pt', f'train_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}.pt')):
-            train_datasets = torch.load(osp.join(self.args.data_dir, 'split_dataset_pt', f'train_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}.pt'))
-            valid_datasets = torch.load(osp.join(self.args.data_dir, 'split_dataset_pt', f'valid_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}.pt'))
-            test_datasets = torch.load(osp.join(self.args.data_dir, 'split_dataset_pt', f'test_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}.pt'))
+        if osp.isfile(osp.join(self.args.data_dir, 'split_dataset_pt', f'train_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}_nc{self.args.num_classes}_{self.args.label_type}.pt')):
+            train_datasets = torch.load(osp.join(self.args.data_dir, 'split_dataset_pt', f'train_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}_nc{self.args.num_classes}_{self.args.label_type}.pt'))
+            valid_datasets = torch.load(osp.join(self.args.data_dir, 'split_dataset_pt', f'valid_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}_nc{self.args.num_classes}_{self.args.label_type}.pt'))
+            test_datasets = torch.load(osp.join(self.args.data_dir, 'split_dataset_pt', f'test_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}_nc{self.args.num_classes}_{self.args.label_type}.pt'))
             self.logger.info(f'train_ds: {len(train_datasets)} | valid_ds: {len(valid_datasets)} | test_ds: {len(test_datasets)}')
         else:
             train_ds, valid_ds, test_ds = get_datasets(osp.join(self.args.data_dir, 'split_datasets'), self.seed)
             self.logger.info(f'train_ds: {len(train_ds)} | valid_ds: {len(valid_ds)} | test_ds: {len(test_ds)}')
-            train_datasets = PretrainedEHRDataset(train_ds, mask_prob=self.args.mask_prob, max_len=self.args.max_len)
-            valid_datasets = PretrainedEHRDataset(valid_ds, mask_prob=self.args.mask_prob, max_len=self.args.max_len)
-            test_datasets = PretrainedEHRDataset(test_ds, mask_prob=self.args.mask_prob, max_len=self.args.max_len)
-            torch.save(train_datasets, osp.join(self.args.data_dir, 'split_dataset_pt', f'train_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}.pt'))
-            torch.save(valid_datasets, osp.join(self.args.data_dir, 'split_dataset_pt', f'valid_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}.pt'))
-            torch.save(test_datasets, osp.join(self.args.data_dir, 'split_dataset_pt', f'test_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}.pt'))
+            train_datasets = PretrainedEHRDataset(train_ds, mask_prob=self.args.mask_prob, max_len=self.args.max_len, num_classes=self.args.num_classes, label_type=self.args.label_type)
+            valid_datasets = PretrainedEHRDataset(valid_ds, mask_prob=self.args.mask_prob, max_len=self.args.max_len, num_classes=self.args.num_classes, label_type=self.args.label_type)
+            test_datasets = PretrainedEHRDataset(test_ds, mask_prob=self.args.mask_prob, max_len=self.args.max_len, num_classes=self.args.num_classes, label_type=self.args.label_type)
+            torch.save(train_datasets, osp.join(self.args.data_dir, 'split_dataset_pt', f'train_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}_nc{self.args.num_classes}_{self.args.label_type}.pt'))
+            torch.save(valid_datasets, osp.join(self.args.data_dir, 'split_dataset_pt', f'valid_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}_nc{self.args.num_classes}_{self.args.label_type}.pt'))
+            torch.save(test_datasets, osp.join(self.args.data_dir, 'split_dataset_pt', f'test_ds_seed{str(self.seed)}_mask{str(self.args.mask_prob)}_nc{self.args.num_classes}_{self.args.label_type}.pt'))
         
         self.train_loader = DataLoader(train_datasets, batch_size=self.args.batch_size, shuffle=True,\
                                        num_workers=self.args.num_workers, collate_fn=collate_fn_pt)
@@ -143,11 +163,9 @@ class Runner:
 
         if load_pretrained:
             if pretraine_type == 'te3-small':
-                self.gpt4o_emb = pickle.load(open(osp.join(self.args.data_dir, 'gpt_emb', 'gpt4o_te3_small_v2.pkl'), 'rb'))
+                self.gpt4o_emb = pickle.load(open(osp.join(self.args.data_dir, 'gpt_emb', 'gpt4o_te3_small_new.pkl'), 'rb'))
             elif pretraine_type == 'te3-large':
-                self.gpt4o_emb = pickle.load(open(osp.join(self.args.data_dir, 'gpt_emb', 'gpt4o_te3_large_v2.pkl'), 'rb'))
-            elif pretraine_type == 'te-ada002':
-                self.gpt4o_emb = pickle.load(open(osp.join(self.args.data_dir, 'gpt_emb', 'gpt4o_te_ada002_v2.pkl'), 'rb'))
+                self.gpt4o_emb = pickle.load(open(osp.join(self.args.data_dir, 'gpt_emb', 'gpt4o_te3_large_new.pkl'), 'rb'))
             else:
                 raise NotImplementedError(f'{pretraine_type} is not implemented')
         
@@ -175,7 +193,8 @@ class Runner:
                                     use_thresholds=self.args.use_thresholds,
                                     mlm_lambda=self.args.mlm_lambda,
                                     diag_freeze=self.args.diag_freeze,
-                                    num_classes=self.args.num_classes,)
+                                    num_classes=self.args.num_classes,
+                                    mlm_loss_type=self.args.mlm_loss_type)
             valid_log = evaluate_model(model=self.model, 
                                        loader=self.valid_loader,
                                        mlm_criterion=self.mlm_criterion, 
@@ -187,6 +206,7 @@ class Runner:
                                        use_thresholds=self.args.use_thresholds,
                                        mlm_lambda=self.args.mlm_lambda,
                                        num_classes=self.args.num_classes,
+                                       mlm_loss_type=self.args.mlm_loss_type,
                                        mode='valid')
             tr_loss_list.append(train_log['loss'])
             tr_mlm_loss_list.append(train_log['mlm_loss'])
@@ -194,6 +214,24 @@ class Runner:
             val_loss_list.append(valid_log['loss'])
             val_mlm_loss_list.append(valid_log['mlm_loss'])
             val_cls_loss_list.append(valid_log['cls_loss'])
+            
+            if epoch % 20 == 0:
+                code_emb = self.model.code_emb.weight.data[1:5089].cpu().detach().numpy()
+                pca_model = PCA(n_components=2, random_state=self.args.seed)
+                umap_model = UMAP(n_components=2, n_neighbors=15, min_dist=0.1, metric='cosine', random_state=self.args.seed)
+                code_emb_pca = pca_model.fit_transform(code_emb)
+                code_emb_umap = umap_model.fit_transform(code_emb)
+                
+                emb_df_pca = pd.DataFrame(code_emb_pca, columns=['projection_x1', 'projection_x2'])
+                emb_df_umap = pd.DataFrame(code_emb_umap, columns=['projection_x1', 'projection_x2'])
+                
+                emb_df_pca['code_name'] = self.emb_name
+                emb_df_pca['code_type'] = self.emb_type_list
+                emb_df_umap['code_name'] = self.emb_name
+                emb_df_umap['code_type'] = self.emb_type_list
+                
+                self.writer.log({f"embeddings_{epoch}/code_embedding_pca": wandb.Table(dataframe=emb_df_pca)})
+                self.writer.log({f"embeddings_{epoch}/code_embedding_umap": wandb.Table(dataframe=emb_df_umap)})
             
             current_score = valid_log['auc']
             if current_score > self.best_val:
@@ -252,7 +290,9 @@ if __name__ == '__main__':
     parser.add_argument('--num_heads', type=int, default=4, help='number of heads')
     parser.add_argument('--num_layers', type=int, default=2, help='number of layers')
     parser.add_argument('--num_classes', type=int, default=100, help='number of classes')
+    parser.add_argument('--label_type', type=str, default='top', help='class label type [top, bot]')   
     parser.add_argument('--loss_type', type=str, default='bce', help='loss type')
+    parser.add_argument('--mlm_loss_type', type=str, default='ce', help='mlm loss type')
     parser.add_argument('--attn_dropout', type=float, default=0.3, help='attention dropout ratio')
     parser.add_argument('--dropout_rate', type=float, default=0.2, help='dropout ratio')
     parser.add_argument('--alpha', type=float, default=None, help='alpha for balanced bce or focal loss')
@@ -266,9 +306,10 @@ if __name__ == '__main__':
     parser.add_argument('--use_thresholds', action="store_true", help='use thresholds for evaluation')
     parser.add_argument('--exp_num', type=int, default=0, required=True, help='experiment number')
     parser.add_argument('--mlm_lambda', type=float, default=0.5, help='lambda for mlm loss')
+    parser.add_argument('--pool_type', type=str, default='mean', help='pooling type [cls, mean]')
     args = parser.parse_args()
     
-    seed_list = [123, 321, 666, 777, 5959]
+    seed_list = [123, 321, 666]
     results = []
     date_dir = datetime.today().strftime("%Y%m%d-%H:%M:%S")
     
@@ -327,19 +368,23 @@ if __name__ == '__main__':
             'num_heads'         : args.num_heads,
             'num_layers'        : args.num_layers,
             'num_classes'       : args.num_classes,
+            'label_type'        : args.label_type,
             'num_workers'       : args.num_workers,
             'dim_feedforward'   : args.ffn_dim,
             'loss_type'         : args.loss_type,
+            'mlm_loss_type'     : args.mlm_loss_type,
             'alpha'             : args.alpha,
             'gamma'             : args.gamma,
             'patience'          : args.patience,
             'use_pretrained'    : args.use_pretrained,
             'pretrained_type'   : args.pretrained_type,
             'diag_freeze'       : args.diag_freeze,
-            'mlm_lambda'        : args.mlm_lambda
+            'mlm_lambda'        : args.mlm_lambda,
+            'pool_type'         : args.pool_type
         }
         
-        writer = wandb.init(project='EHR-Project-New', name=wandb_name, config=wandb_config, tags=[str(seed), tags2, tags3, tags4],
+        writer = wandb.init(project='EHR-Project-New', name=wandb_name, config=wandb_config, 
+                            tags=[str(seed), tags2, tags3, tags4, f'{args.label_type}_{args.num_classes}', args.pool_type],
                             reinit=True, settings=wandb.Settings(start_method='thread'), mode=wandb_mode)
         
         args.seed = seed
@@ -359,8 +404,14 @@ if __name__ == '__main__':
         acc, prec, rec, f1, auc = model.fit()
         results.append([acc, prec, rec, f1, auc])
         writer.finish()
+        
+        
+    if args.use_pretrained:
+        result_name = f'{args.model_name}-GPT4O-EXP{str(args.exp_num)}_{date_dir}' 
+    else:
+        result_name = f'{args.model_name}-EXP{str(args.exp_num)}-{date_dir}'
 
-    result_summary_fn = f'./src/pretrained_models/results_summary/{args.name}.txt'
+    result_summary_fn = f'./src/pretrained_models/results_summary/{result_name}.txt'
     results = np.array(results)
     print(np.mean(results, 0))
     with open(result_summary_fn, 'w') as f:

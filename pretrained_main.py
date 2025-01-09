@@ -315,7 +315,7 @@ if __name__ == '__main__':
     
     seed_list = [123, 321, 666, 777, 5959]
     results = []
-    date_dir = datetime.today().strftime("%Y%m%d")
+    date_dir = datetime.today().strftime("%Y%m%d-%H:%M:%S")
     
     if args.use_wandb:
         wandb_mode = 'online'
@@ -409,7 +409,12 @@ if __name__ == '__main__':
         results.append([acc, prec, rec, f1, auc])
         writer.finish()
 
-    result_summary_fn = f'./src/pretrained_models/results_summary/{args.name}.txt'
+    if args.use_pretrained:
+        result_name = f'{args.model_name}-GPT4O-EXP{str(args.exp_num)}_{date_dir}' 
+    else:
+        result_name = f'{args.model_name}-EXP{str(args.exp_num)}-{date_dir}'
+
+    result_summary_fn = f'./src/pretrained_models/results_summary/{result_name}.txt'
     results = np.array(results)
     print(np.mean(results, 0))
     with open(result_summary_fn, 'w') as f:

@@ -33,8 +33,8 @@ class BERT(nn.Module):
             self.pretrained_emb = pretrained_emb[:, :embed_dim]
             self.diag_size = self.pretrained_emb.size(0) + 1
             self.code_emb = Embedding(vocab_size, embed_dim, padding_idx=0)
-            init_std = self.code_emb.weight.std().item()
-            self.pretrained_emb = (self.pretrained_emb - self.pretrained_emb.mean()) / self.pretrained_emb.std() * init_std
+            # init_std = nn.init.calculate_gain('leaky_relu') / (embed_dim ** 0.5)
+            # self.pretrained_emb = (self.pretrained_emb - self.pretrained_emb.mean(0)) / self.pretrained_emb.std(0) * init_std
             self.code_emb.weight.data[1:self.diag_size] = self.pretrained_emb
             
         self.positional_encoding = PositionalEncoding(embed_dim, dropout_rate, max_len)
@@ -84,12 +84,13 @@ class BERT(nn.Module):
     
     def forward(self, batch):
         code_embs = self.code_emb(batch['masked_visit_seq'].to(self.device))
-        code_embs_pos = self.positional_encoding(code_embs.to(self.device))
+        # code_embs_pos = self.positional_encoding(code_embs.to(self.device))
         visit_seg = self.visit_segment_emb(batch['visit_segments'].to(self.device))
-        code_types = self.code_type_emb(batch['code_types'].to(self.device))
+        # code_types = self.code_type_emb(batch['code_types'].to(self.device))
         timedelta_emb = self.time_emb(batch['time_delta'].to(self.device),
                                       batch['seq_mask'].unsqueeze(2).to(self.device))
-        input_embs = code_embs_pos + visit_seg + code_types + timedelta_emb
+        # input_embs = code_embs_pos + visit_seg + code_types + timedelta_emb
+        input_embs = code_embs + visit_seg + timedelta_emb
         
         encoder_output = self.encoder(input_embs, src_key_padding_mask=batch['seq_mask'].to(self.device))
         mlm_pos = batch['mask_pos'][:, :, None].expand(-1, -1, encoder_output.size(-1)).long()
