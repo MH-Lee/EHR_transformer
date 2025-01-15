@@ -1,23 +1,23 @@
 BATCH_SIZE=256
-LEARNING_RATE=5e-4
+LEARNING_RATE=1e-4
 MASK_PROB=0.25
 DIM_FEEDFORWARD=2048
 LOSS_TYPE=balanced_bce
-PRETRAINED_TYPE=te3-small
+PRETRAINED_TYPE=te3-large
 MLM_LOSS_TYPE=ce
 EMB_DIM=768
 EPOCHS=100
-NUM_HEADS=4
-NUM_LAYERS=2
+NUM_HEADS=8
+NUM_LAYERS=4
 NUM_CLASSES=80
 LABEL_TYPE=top
 ATTN_DROPOUT=0.3
 DROPOUT=0.2
 MLM_LAMBDA=0.25
 GAMMA=0.0
-ALPHA=0.35
+ALPHA=0.25
 POOL_TYPE=cls
-EXP_NUM=3
+EXP_NUM=4
 DEVICE=cuda:1
 
 python -u pretrained_main_new_emb.py \
@@ -44,4 +44,5 @@ python -u pretrained_main_new_emb.py \
         --pool_type $POOL_TYPE \
         --use_thresholds \
         --use_pretrained \
+        --diag_freeze \
         --use_wandb

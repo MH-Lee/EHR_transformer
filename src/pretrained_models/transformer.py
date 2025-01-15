@@ -48,14 +48,14 @@ class BERT(nn.Module):
                                                    dropout=attn_dropout,
                                                    dim_feedforward=hidden_dim, 
                                                    batch_first=True,
-                                                   activation='gelu')
+                                                   activation='gelu',
+                                                   bias=True)
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.encoder.apply(self.reset_parameters)
         
         # if self.mlm_loss_type == 'ce':
         #     self.mlm_layer = nn.Linear(embed_dim, vocab_size)
         self.classify_layer = nn.Linear(embed_dim, num_classes)
-        
         self.act2 = nn.GELU()
         self.fc1 = nn.Linear(embed_dim, embed_dim)
         

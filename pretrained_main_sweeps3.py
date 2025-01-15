@@ -20,6 +20,7 @@ from src.loss import BalancedBinaryCrossEntropyLoss, FocalLoss
 from src.pretrained_models.utils import get_datasets, get_logger
 from pprint import pprint
 from datetime import datetime
+from easydict import EasyDict as edict
 import os.path as osp
 import wandb
 
@@ -45,29 +46,45 @@ class Runner:
         else:
             self.device = torch.device('cpu')
         
-        self.labels_list = pickle.load(open(osp.join(args.data_dir, 'top_100_list.pkl'), 'rb'))
-        
         self.seed = args.seed
         self.logger.info(f'device: {self.device}')
         self.date_str = datetime.now().strftime("%Y%m%d")
         self.code_idx = pickle.load(open(osp.join(args.data_dir, 'code_indices', 'code_dict_pretrained.pkl'), 'rb'))
+        self.emb_name = list(self.code_idx.keys())[1:5089]
+        
+        self.emb_type_list = [
+            "diagnosis" if item.startswith("d_") else
+            "procedure" if item.startswith("pcs") else
+            "drug" if item.startswith("p_") else item
+            for item in self.emb_name
+        ]
+        
         self.load_data(pretraine_type=args.pretrained_type, load_pretrained=args.use_pretrained)
+        
         if self.args.use_pretrained:
             self.model = BERT(vocab_size=len(self.code_idx), pretrained_emb=self.gpt4o_emb.float(),
                               embed_dim=self.args.embed_dim, num_heads=self.args.num_heads,\
                               hidden_dim=self.args.ffn_dim, num_layers=self.args.num_layers, \
                               max_len=self.args.max_len, attn_dropout=self.args.attn_dropout, \
-                              dropout_rate=self.args.dropout_rate, device=self.device, \
-                              num_classes=self.args.num_classes).to(self.device)
+                              dropout_rate=self.args.dropout_rate, device=self.device, pool_type=self.args.pool_type,\
+                              num_classes=self.args.num_classes, mlm_loss_type=self.args.mlm_loss_type).to(self.device)
         else:
             self.model = BERT(vocab_size=len(self.code_idx), embed_dim=self.args.embed_dim, \
                               num_heads=self.args.num_heads, hidden_dim=self.args.ffn_dim, \
                               num_layers=self.args.num_layers, max_len=self.args.max_len, \
                               attn_dropout=self.args.attn_dropout, dropout_rate=self.args.dropout_rate, \
-                              device=self.device, num_classes=self.args.num_classes).to(self.device)
+                              device=self.device, pool_type=self.args.pool_type, num_classes=self.args.num_classes,\
+                              mlm_loss_type=self.args.mlm_loss_type).to(self.device)
 
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=args.lr)
-        self.mlm_criterion = nn.CrossEntropyLoss(reduction='none', ignore_index=0)
+        
+        if self.args.mlm_loss_type == 'ce':
+            self.mlm_criterion = nn.CrossEntropyLoss(reduction='none', ignore_index=0)
+        elif self.args.mlm_loss_type == 'mse':
+            self.mlm_criterion = nn.MSELoss(reduction='none')
+        else:
+            raise NotImplementedError(f'{self.args.mlm_loss_type} is not implemented')
+            
         if self.args.loss_type == 'bce':
             self.cls_criterion = nn.BCEWithLogitsLoss()
         elif self.args.loss_type == 'balanced_bce':
@@ -76,7 +93,6 @@ class Runner:
             self.cls_criterion = FocalLoss(gamma=args.gamma, alpha=args.alpha, device=self.device)
         else:
             raise NotImplementedError(f'{self.args.loss_type} is not implemented')
-        
         
     def save_model(self, save_path):
         """
@@ -143,11 +159,11 @@ class Runner:
 
         if load_pretrained:
             if pretraine_type == 'te3-small':
-                self.gpt4o_emb = pickle.load(open(osp.join(self.args.data_dir, 'gpt_emb', 'gpt4o_te3_small_v2.pkl'), 'rb'))
+                self.gpt4o_emb = pickle.load(open(osp.join(self.args.data_dir, 'gpt_emb', 'gpt4o_te3_small_v3.pkl'), 'rb'))
             elif pretraine_type == 'te3-large':
-                self.gpt4o_emb = pickle.load(open(osp.join(self.args.data_dir, 'gpt_emb', 'gpt4o_te3_large_v2.pkl'), 'rb'))
+                self.gpt4o_emb = pickle.load(open(osp.join(self.args.data_dir, 'gpt_emb', 'gpt4o_te3_large_v3.pkl'), 'rb'))
             elif pretraine_type == 'te-ada002':
-                self.gpt4o_emb = pickle.load(open(osp.join(self.args.data_dir, 'gpt_emb', 'gpt4o_te_ada002_v2.pkl'), 'rb'))
+                self.gpt4o_emb = pickle.load(open(osp.join(self.args.data_dir, 'gpt_emb', 'gpt4o_te_ada002_v3.pkl'), 'rb'))
             else:
                 raise NotImplementedError(f'{pretraine_type} is not implemented')
         
@@ -175,7 +191,8 @@ class Runner:
                                     use_thresholds=self.args.use_thresholds,
                                     mlm_lambda=self.args.mlm_lambda,
                                     diag_freeze=self.args.diag_freeze,
-                                    num_classes=self.args.num_classes,)
+                                    num_classes=self.args.num_classes)
+            
             valid_log = evaluate_model(model=self.model, 
                                        loader=self.valid_loader,
                                        mlm_criterion=self.mlm_criterion, 
@@ -188,6 +205,7 @@ class Runner:
                                        mlm_lambda=self.args.mlm_lambda,
                                        num_classes=self.args.num_classes,
                                        mode='valid')
+            
             tr_loss_list.append(train_log['loss'])
             tr_mlm_loss_list.append(train_log['mlm_loss'])
             tr_cls_loss_list.append(train_log['cls_loss'])
@@ -230,145 +248,117 @@ class Runner:
                                   num_classes=self.args.num_classes,
                                   mode='test')
         self.logger.info(f"Best Combined metrics: \n {str(test_log)}")
-        return test_log['acc'], test_log['precision'], test_log['recall'], test_log['f1'], test_log['auc']
-    
+        return self.best_val, test_log['acc'], test_log['precision'], test_log['recall'], test_log['f1'], test_log['auc']
+
+
+def main():
+    with wandb.init() as writer:
+        if wandb.config.use_pretrained:
+            if wandb.config.diag_freeze:            
+                wandb_name = f'EHR-Transformer_EXP04_SWEEPS'
+                tags = ('diag_freeze', wandb.config.loss_type, wandb.config.pretrained_type)
+            else:
+                wandb_name = f'EHR-Transformer_EXP03_SWEEPS'
+                tags = ('diag_freeze_not', wandb.config.loss_type,  wandb.config.pretrained_type)
+        else:
+            if wandb.config.diag_freeze:
+                wandb_name = f'EHR-Transformer_EXP02_SWEEPS'
+                tags = ('diag_freeze', wandb.config.loss_type, 'no_pretrained')
+            else:
+                wandb_name = f'EHR-Transformer_EXP01_SWEEPS'
+                tags = ('diag_freeze_not', wandb.config.loss_type, 'no_pretrained')
+
+        device = torch.device(wandb.config.device)
+        date_dir = datetime.today().strftime("%Y%m%d")
+        log_dir = './src/pretrained_models/log/'
+        writer.name = f'{wandb_name}_{str(date_dir)}'
+        writer.tags =  writer.tags + tags
+        seed_list = [123, 321, 666]
+        
+        results = []
+        val_auc_list = []
+        for seed in seed_list:
+            torch.manual_seed(seed)
+            torch.cuda.manual_seed(seed)
+            torch.cuda.manual_seed_all(seed)
+            np.random.seed(seed)
+            cudnn.benchmark = False
+            cudnn.deterministic = True
+            random.seed(seed)
+
+            name = f'{wandb_name}_SEED{str(seed)}_{str(date_dir)}-{str(time.strftime("%H:%M:%S"))}' 
+            log_name = f'{name}.log'
+
+            args_dict = {
+                'model_name': 'EHR-Transformer',
+                'data_dir': './new_data/',
+                'config_dir': './src/config/',
+                'checkpoint_dir': './src/pretrained_models/results/',
+                'name': name,
+                'log_dir': log_dir,
+                'log_name': log_name,
+                'device': device,
+                'max_epoch': 50,
+                'max_len': 400,
+                'num_classes': 80,
+                'num_workers': 8,
+                'embed_dim': 768,
+                'batch_size': 256,
+                'learning_rate': wandb.config.learning_rate,
+                'patience': 5,
+                'mask_prob': 0.25,
+                'num_heads': 8,
+                'dim_feedforward': 2048,
+                'num_layers': wandb.config.num_layers,
+                'dropout_rate': 0.3,
+                'attention_dropout': 0.2,
+                'loss_type': wandb.config.loss_type,
+                'alpha': wandb.config.alpha,
+                'gamma': 0.0,
+                'use_pretrained': wandb.config.use_pretrained,
+                'pretrained_type': wandb.config.pretrained_type,
+                'diag_freeze': wandb.config.diag_freeze,
+                'mlm_lambda': wandb.config.mlm_lambda,
+            }
+
+            configs = edict(args_dict)
+            os.makedirs(log_dir, exist_ok=True)
+            os.makedirs(osp.join(configs.checkpoint_dir, date_dir), exist_ok=True)
+            model = Runner(configs, writer)
+            best_val_auc, acc, prec, rec, f1, auc = model.fit()
+            results.append([auc, f1, acc, prec, rec])
+            results = np.array(results)
+            val_auc_list.append(best_val_auc)
+            te_avg_results = np.mean(results, 0)
+
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='EHR mimic-iv train model', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--model_name', type=str, default='EHR-Transformer', help='model name')
-    parser.add_argument('--data_dir', type=str, default='./new_data/', help='data directory')
-    parser.add_argument('--expset_dir', type=str, default='./src/pretrained_models/exp_setting', help='experiment setting directory')
-    parser.add_argument('--log_dir', type=str, default='./src/pretrained_models/log/', help='log directory')
-    parser.add_argument('--config_dir', type=str, default='./src/config/', help='config directory')
-    parser.add_argument('--checkpoint_dir', type=str, default='./src/pretrained_models/results/', help='model directory')
-    parser.add_argument('--max_epoch', type=int, default=100, help='max epoch')
-    parser.add_argument('--batch_size', type=int, default=256, help='batch size')
-    parser.add_argument('--lr', type=float, default=0.0005, help='learning rate')
-    parser.add_argument('--device', type=str, default='cuda:0', help='device')
-    parser.add_argument('--mask_prob', type=float, default=0.2, help='mask probability')
-    parser.add_argument('--max_len', type=int, default=400, help='max length')
-    parser.add_argument('--embed_dim', type=int, default=768, help='model dimension')
-    parser.add_argument('--ffn_dim', type=int, default=2048, help='feedforward net dimension')
-    parser.add_argument('--num_heads', type=int, default=4, help='number of heads')
-    parser.add_argument('--num_layers', type=int, default=2, help='number of layers')
-    parser.add_argument('--num_classes', type=int, default=100, help='number of classes')
-    parser.add_argument('--loss_type', type=str, default='bce', help='loss type')
-    parser.add_argument('--attn_dropout', type=float, default=0.3, help='attention dropout ratio')
-    parser.add_argument('--dropout_rate', type=float, default=0.2, help='dropout ratio')
-    parser.add_argument('--alpha', type=float, default=None, help='alpha for balanced bce or focal loss')
-    parser.add_argument('--gamma', type=float, default=0.5, help='gamma for focal loss')
-    parser.add_argument('--patience', type=int, default=5, help='patience for early stopping')
-    parser.add_argument('--use_pretrained', action="store_true", help='use pretrained model')
-    parser.add_argument('--num_workers', type=int, default=8, help='number of workers')
+    parser = argparse.ArgumentParser(description='EHR mimic-iv train model SWEEP', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--pretrained_type', type=str, default='te3-small', help='pretrained model type')
+    parser.add_argument('--use_pretrained', action="store_true", help='use pretrained model')
     parser.add_argument('--diag_freeze', action="store_true", help='pretrained embedding freeze')
-    parser.add_argument('--use_wandb', action="store_true", help='use wandb (defalut: False)')
-    parser.add_argument('--use_thresholds', action="store_true", help='use thresholds for evaluation')
-    parser.add_argument('--exp_num', type=int, default=0, required=True, help='experiment number')
-    parser.add_argument('--mlm_lambda', type=float, default=0.5, help='lambda for mlm loss')
+    parser.add_argument('--loss_type', type=str, default='balanced_bce', help='loss type')
+    parser.add_argument('--device', type=str, default='cuda:0', help='device')
     args = parser.parse_args()
     
-    seed_list = [123, 321, 666, 777, 5959]
-    results = []
-    date_dir = datetime.today().strftime("%Y%m%d-%H:%M:%S")
-    
-    if args.use_wandb:
-        wandb_mode = 'online'
-    else:
-        wandb_mode = 'disabled'
-    
-    for seed in seed_list:
-        torch.manual_seed(seed)
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-        np.random.seed(seed)
-        cudnn.benchmark = False
-        cudnn.deterministic = True
-        random.seed(seed)
-        
-        if args.use_pretrained:
-            if args.diag_freeze:
-                args.name = f'{args.model_name}-GPT4O-EXP{str(seed)}-{str(args.exp_num)}_{date_dir}' 
-                wandb_name = f'{args.model_name}-GPT4O-EXP{str(seed)}-{str(args.exp_num)}'
-                tags2 = 'diag_freeze'
-                tags3 = args.pretrained_type
-                tags4 = args.loss_type
-            else:
-                args.name = f'{args.model_name}-GPT4O_EXP{str(seed)}-{str(args.exp_num)}_{date_dir}'
-                wandb_name = f'{args.model_name}-GPT4O_EXP{str(seed)}-{str(args.exp_num)}'
-                tags2 = 'diag_freeze_not'
-                tags3 = args.pretrained_type
-                tags4 = args.loss_type
-        else:
-            if args.diag_freeze:
-                args.name = f'{args.model_name}-EXP{str(seed)}-{str(args.exp_num)}-{date_dir}'
-                wandb_name = f'{args.model_name}-EXP{str(seed)}-{str(args.exp_num)}'
-                tags2 = 'diag_freeze'
-                tags3 = 'no_pretrained'
-                tags4 = args.loss_type
-            else:
-                args.name = f'{args.model_name}-EXP{str(seed)}-{str(args.exp_num)}-{date_dir}'
-                wandb_name = f'{args.model_name}-EXP{str(seed)}-{str(args.exp_num)}'
-                tags2 = 'diag_freeze_not'
-                tags3 = 'no_pretrained'
-                tags4 = args.loss_type
-            
-        wandb_config = {
-            'model_name'        : args.model_name,
-            'seed'              : seed,
-            'device'            : args.device,
-            'batch_size'        : args.batch_size,
-            'max_epoch'         : args.max_epoch,
-            'learning_rate'     : args.lr,
-            'mask_prob'         : args.mask_prob,
-            'attention_dropout' : args.attn_dropout,
-            'dropout_rate'      : args.dropout_rate,
-            'embed_dim'         : args.embed_dim,
-            'num_heads'         : args.num_heads,
-            'num_layers'        : args.num_layers,
-            'num_classes'       : args.num_classes,
-            'num_workers'       : args.num_workers,
-            'dim_feedforward'   : args.ffn_dim,
-            'loss_type'         : args.loss_type,
-            'alpha'             : args.alpha,
-            'gamma'             : args.gamma,
-            'patience'          : args.patience,
-            'use_pretrained'    : args.use_pretrained,
-            'pretrained_type'   : args.pretrained_type,
-            'diag_freeze'       : args.diag_freeze,
-            'mlm_lambda'        : args.mlm_lambda
+    sweep_configuration = {
+        'method': 'grid',  # 검색 방법 (옵션: 'random', 'grid', 'bayes')
+        'metric': {'name': 'valid AUC', 'goal': 'maximize'},
+        'parameters': {
+            'learning_rate': {'values': [1e-4, 5e-4]},
+            'num_layers': {'values': [2, 4]},
+            'use_pretrained': {'values': [args.use_pretrained]},
+            'pretrained_type': None,
+            'diag_freeze': {'values': [args.diag_freeze]},
+            'loss_type': {'values': [args.loss_type]},
+            'device': {'values': [args.device]},
+            'alpha': {'values': [0.25, 0.3, 0.4]},
+            'mlm_lambda': {'values': [0.25, 0.3, 0.35]}
         }
-        
-        writer = wandb.init(project='EHR-Project-New', name=wandb_name, config=wandb_config, tags=[str(seed), tags2, tags3, tags4],
-                            reinit=True, settings=wandb.Settings(start_method='thread'), mode=wandb_mode)
-        
-        args.seed = seed
-        # args.name = args.name + str(seed)
-        args.log_name = args.name + '.log'
-        exp_setting = vars(args)
-        os.makedirs(args.expset_dir, exist_ok=True)
-        with open(osp.join(args.expset_dir, args.name + '.json'), 'w') as f:
-            json.dump(exp_setting, f)
-        f.close()
-        
-        os.makedirs(args.log_dir, exist_ok=True)
-        os.makedirs(args.checkpoint_dir, exist_ok=True)
-        
-        model = Runner(args, writer)
-        wandb.watch(model.model, log='all')
-        acc, prec, rec, f1, auc = model.fit()
-        results.append([acc, prec, rec, f1, auc])
-        writer.finish()
+    }
+    
+    if args.use_pretrained:
+        sweep_configuration['parameters']['pretrained_type'] = {'values': [args.pretrained_type]}
 
-    result_summary_fn = f'./src/pretrained_models/results_summary/{args.name}.txt'
-    print(result_summary_fn)
-    results = np.array(results)
-    print("Average: ", np.mean(results, 0))
-    print("Std.: ", np.std(results, 0))
-    with open(result_summary_fn, 'w') as f:
-        f.write(args.model_name)
-        f.write('\n')
-        f.write(str(np.mean(results, 0)))
-        f.write('\n')
-        f.write(str(np.std(results, 0)))
-    f.close()
+    sweep_id = wandb.sweep(sweep=sweep_configuration, entity='leemh', project="EHR-GPT-SWEEP")
+    wandb.agent(sweep_id, function=main, count=36)
