@@ -309,18 +309,18 @@ def main():
                 'log_name': log_name,
                 'device': device,
                 'seed': seed,
-                'max_epoch': 50,
+                'max_epoch': 80,
                 'max_len': 400,
                 'num_classes': 80,
                 'num_workers': 8,
-                'embed_dim': 768,
+                'embed_dim': wandb.config.embed_dim,
                 'batch_size': 256,
-                'learning_rate': 5e-4,
+                'learning_rate': wandb.config.learning_rate,
                 'patience': 5,
                 'mask_prob': 0.25,
                 'num_heads': 8,
-                'dim_feedforward': wandb.config.ffn_dim,
-                'num_layers': wandb.config.num_layers,
+                'dim_feedforward': 4096,
+                'num_layers': 2,
                 'dropout_rate': 0.3,
                 'attention_dropout': 0.2,
                 'loss_type': wandb.config.loss_type,
@@ -362,7 +362,7 @@ def main():
         results = np.array(results)
         print(np.mean(results, 0))
         with open(result_summary_fn, 'w') as f:
-            f.write(args.model_name)
+            f.write(result_name)
             f.write('\n')
             f.write(str(np.mean(results, 0)))
             f.write('\n')
@@ -373,7 +373,7 @@ def main():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='EHR mimic-iv train model SWEEP', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--pretrained_type', type=str, default='te3-small', help='pretrained model type')
+    # parser.add_argument('--pretrained_type', type=str, default='te3-small', help='pretrained model type')
     parser.add_argument('--loss_type', type=str, default='balanced_bce', help='loss type')
     parser.add_argument('--use_pretrained', action="store_true", help='use pretrained model')
     parser.add_argument('--diag_freeze', action="store_true", help='pretrained embedding freeze')
@@ -384,21 +384,22 @@ if __name__ == '__main__':
         'method': 'grid',  # 검색 방법 (옵션: 'random', 'grid', 'bayes')
         'metric': {'name': 'valid/best AUC', 'goal': 'maximize'},
         'parameters': {
-            # 'learning_rate': {'values': [1e-4, 5e-4]},
-            'num_layers': {'values': [2, 4, 6]},
-            'ffn_dim': {'values': [2048, 4096]},
+            # 'num_layers': {'values': [2, 4]},
+            # 'ffn_dim': {'values': [2048]},
+            'embed_dim': {'values': [256, 512, 768]},
+            'learning_rate': {'values': [1e-4, 5e-4, 1e-3]},
             'use_pretrained': {'values': [args.use_pretrained]},
             'diag_freeze': {'values': [args.diag_freeze]},
             'loss_type': {'values': [args.loss_type]},
             'device': {'values': [args.device]},
-            'pool_type': {'values': ['cls']},
-            'alpha': {'values': [0.25, 0.35]},
-            'mlm_lambda': {'values': [0.25, 0.35]}
+            'pool_type': {'values': ['cls', 'mean', 'concat']},
+            'alpha': {'values': [0.35, 0.4, 0.45]},
+            'mlm_lambda': {'values': [0.25]}
         }
     }
     
     if args.use_pretrained:
-        sweep_configuration['parameters']['pretrained_type'] = {'values': [args.pretrained_type]}
+        sweep_configuration['parameters']['pretrained_type'] = {'values': ['te3-large', 'te3-small']}
     
     if args.loss_type == 'focalloss':
         sweep_configuration['parameters']['gamma'] = {'values': [0.0, 0.25, 0.5]}
